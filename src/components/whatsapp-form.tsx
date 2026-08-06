@@ -27,7 +27,7 @@ export const WhatsAppForm: React.FC<WhatsAppFormProps> = ({
 
   // Check Web Share API capability on client
   useEffect(() => {
-    if (typeof navigator !== 'undefined' && navigator.share && navigator.canShare) {
+    if (typeof window !== 'undefined' && 'share' in navigator && 'canShare' in navigator) {
       setCanWebShare(true);
     }
   }, []);
