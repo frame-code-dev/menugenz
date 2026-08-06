@@ -1,0 +1,12 @@
+services:
+  app:
+    image: node:20-alpine
+    container_name: menu_caption_app
+    working_dir: /app
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+    command: sh -c "npm install --legacy-peer-deps && npm run dev"
+    environment:
+      - NODE_ENV=development
