@@ -71,44 +71,119 @@ Format output:
   "mbg_note": "Tepat 2 kalimat menarik tentang Program Makan Bergizi Gratis (MBG)."
 }`;
 
-    const endpoint = `${baseUrl}/models/${model}:generateContent?key=${apiKey}`;
+    const primaryModel = (process.env.AI_MODEL || 'gemini-flash-latest').trim();
+    const candidateModels = Array.from(
+      new Set([primaryModel, 'gemini-3.5-flash', 'gemini-flash-lite-latest'])
+    );
 
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              { text: systemPrompt },
-              {
-                inline_data: {
-                  mime_type: file.type || 'image/jpeg',
-                  data: base64Image,
+    let rawText: string | null = null;
+    let lastErrorStatus: number = 500;
+    let lastErrorMessage: string = 'Layanan AI sedang sibuk. Silakan coba beberapa saat lagi.';
+    let isRateLimited = false;
+
+    for (const modelToTry of candidateModels) {
+      let modelSuccess = false;
+
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const endpoint = `${baseUrl}/models/${modelToTry}:generateContent?key=${apiKey}`;
+
+          const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              contents: [
+                {
+                  parts: [
+                    { text: systemPrompt },
+                    {
+                      inline_data: {
+                        mime_type: file.type || 'image/jpeg',
+                        data: base64Image,
+                      },
+                    },
+                  ],
                 },
+              ],
+              generationConfig: {
+                response_mime_type: 'application/json',
+                temperature: 0.2,
               },
-            ],
-          },
-        ],
-        generationConfig: {
-          response_mime_type: 'application/json',
-          temperature: 0.2,
-        },
-      }),
-    });
+            }),
+          });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Gemini Vision API error:', errorText);
+          if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`Gemini Vision API error (model: ${modelToTry}, attempt: ${attempt}):`, errorText);
+            lastErrorStatus = response.status;
 
-      if (response.status === 429) {
+            if (response.status === 429) {
+              isRateLimited = true;
+              lastErrorMessage = 'Batas penggunaan AI harian/menit telah tercapai. Silakan coba kembali beberapa saat lagi.';
+            } else if (response.status === 503) {
+              lastErrorMessage = 'Layanan AI sedang mengalami lonjakan beban. Sedang mencoba kembali...';
+            }
+
+            if (response.status === 503 || response.status === 429) {
+              await new Promise((res) => setTimeout(res, 1200 * attempt));
+              continue;
+            }
+
+            break;
+          }
+
+          const result = await response.json();
+          const parts = result.candidates?.[0]?.content?.parts;
+
+          if (Array.isArray(parts) && parts.length > 0) {
+            let combined = '';
+            for (const p of parts) {
+              if (p && typeof p.text === 'string') {
+                combined += p.text;
+              }
+            }
+            combined = combined.trim();
+
+            const fenceMatch = combined.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+            if (fenceMatch && fenceMatch[1]) {
+              rawText = fenceMatch[1].trim();
+            } else {
+              const start = combined.indexOf('{');
+              const end = combined.lastIndexOf('}');
+              if (start !== -1 && end > start) {
+                rawText = combined.substring(start, end + 1).trim();
+              } else {
+                rawText = combined;
+              }
+            }
+          }
+
+          if (rawText) {
+            modelSuccess = true;
+            break;
+          }
+        } catch (fetchErr: any) {
+          console.warn(`Fetch attempt ${attempt} for model ${modelToTry} failed:`, fetchErr?.message || fetchErr);
+          if (attempt < 2) {
+            await new Promise((res) => setTimeout(res, 1000 * attempt));
+          }
+        }
+      }
+
+      if (modelSuccess && rawText) {
+        break;
+      }
+    }
+
+    if (!rawText) {
+      if (isRateLimited) {
         return NextResponse.json(
           {
             success: false,
             isRateLimited: true,
-            message: 'Batas penggunaan AI harian/menit telah tercapai. Silakan coba kembali beberapa saat lagi.',
+            message: lastErrorMessage,
           },
           { status: 429 }
         );
@@ -117,24 +192,22 @@ Format output:
       return NextResponse.json(
         {
           success: false,
-          message: 'Layanan AI sedang sibuk. Silakan coba beberapa saat lagi.',
+          message: lastErrorMessage || 'Gagal membaca gambar menu dengan AI. Silakan coba kembali beberapa saat lagi.',
         },
-        { status: response.status }
+        { status: lastErrorStatus || 500 }
       );
     }
 
-    const result = await response.json();
-    const rawText = result.candidates?.[0]?.content?.parts?.[0]?.text;
-
-    if (!rawText) {
+    let parsed: any;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch (parseErr) {
+      console.error('JSON parse error from Gemini output:', parseErr, 'Raw:', rawText);
       return NextResponse.json(
-        { success: false, message: 'Hasil AI tidak dapat diproses.' },
+        { success: false, message: 'Hasil pembacaan menu dari AI tidak dalam format yang valid. Silakan coba lagi.' },
         { status: 500 }
       );
     }
-
-    const cleanedJson = rawText.replace(/^```json\s*|\s*```$/gi, '').trim();
-    const parsed = JSON.parse(cleanedJson);
 
     const menuResult = {
       date: parsed.date && parsed.date !== 'null' ? parsed.date : null,

@@ -10,3 +10,6 @@ services:
     command: sh -c "npm install --legacy-peer-deps && npm run dev"
     environment:
       - NODE_ENV=development
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1

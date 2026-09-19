@@ -2,20 +2,30 @@
 
 import React, { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
+import { AppMode } from '@/types/receipt';
 
 interface LoadingStateProps {
   isLoading: boolean;
+  mode?: AppMode;
 }
 
-const steps = [
-  { icon: '🔍', text: 'Membaca gambar...' },
+const menuSteps = [
+  { icon: '🔍', text: 'Membaca gambar menu...' },
   { icon: '📝', text: 'Membaca tulisan pada menu...' },
   { icon: '🍱', text: 'Mengidentifikasi makanan...' },
-  { icon: '✨', text: 'Membuat caption...' },
+  { icon: '✨', text: 'Membuat caption WhatsApp...' },
 ];
 
-export const LoadingState: React.FC<LoadingStateProps> = ({ isLoading }) => {
+const receiptSteps = [
+  { icon: '🔍', text: 'Membaca gambar struk...' },
+  { icon: '🏪', text: 'Mendeteksi toko & tanggal...' },
+  { icon: '🛒', text: 'Mengekstrak daftar item & harga...' },
+  { icon: '📊', text: 'Menghitung total & menyusun laporan...' },
+];
+
+export const LoadingState: React.FC<LoadingStateProps> = ({ isLoading, mode = 'menu' }) => {
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  const steps = mode === 'receipt' ? receiptSteps : menuSteps;
 
   useEffect(() => {
     if (!isLoading) {
@@ -28,7 +38,7 @@ export const LoadingState: React.FC<LoadingStateProps> = ({ isLoading }) => {
     }, 1200);
 
     return () => clearInterval(interval);
-  }, [isLoading]);
+  }, [isLoading, steps.length]);
 
   if (!isLoading) return null;
 
@@ -46,7 +56,9 @@ export const LoadingState: React.FC<LoadingStateProps> = ({ isLoading }) => {
       </div>
 
       <p className="text-xs text-emerald-600/80">
-        AI Vision sedang memproses foto menu Anda...
+        {mode === 'receipt'
+          ? 'AI OCR & Vision sedang mengekstrak rincian struk belanja...'
+          : 'AI Vision sedang memproses foto menu Anda...'}
       </p>
 
       {/* Progress Dots */}
@@ -65,3 +77,4 @@ export const LoadingState: React.FC<LoadingStateProps> = ({ isLoading }) => {
     </div>
   );
 };
+

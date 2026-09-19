@@ -1,14 +1,16 @@
 'use client';
 
 import React, { useRef, useState } from 'react';
-import { UploadCloud, Image as ImageIcon, AlertCircle } from 'lucide-react';
+import { UploadCloud, Image as ImageIcon, AlertCircle, Receipt } from 'lucide-react';
+import { AppMode } from '@/types/receipt';
 
 interface MenuUploaderProps {
   onFileSelect: (file: File) => void;
   disabled?: boolean;
+  mode?: AppMode;
 }
 
-export const MenuUploader: React.FC<MenuUploaderProps> = ({ onFileSelect, disabled }) => {
+export const MenuUploader: React.FC<MenuUploaderProps> = ({ onFileSelect, disabled, mode = 'menu' }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -79,14 +81,16 @@ export const MenuUploader: React.FC<MenuUploaderProps> = ({ onFileSelect, disabl
         />
 
         <div className="w-16 h-16 mb-4 rounded-2xl bg-emerald-100/80 text-emerald-600 flex items-center justify-center shadow-sm">
-          <UploadCloud className="w-8 h-8" />
+          {mode === 'receipt' ? <Receipt className="w-8 h-8" /> : <UploadCloud className="w-8 h-8" />}
         </div>
 
         <h3 className="text-lg font-semibold text-gray-800 mb-1 text-center">
-          Upload Foto Menu Makanan
+          {mode === 'receipt' ? 'Upload Foto Struk / Nota Belanja' : 'Upload Foto Menu Makanan'}
         </h3>
         <p className="text-sm text-gray-500 mb-4 text-center max-w-md">
-          Drag & drop gambar ke sini, atau klik tombol di bawah untuk memilih file.
+          {mode === 'receipt'
+            ? 'Drag & drop foto struk kasir, nota belanja, atau bon belanjaan ke sini'
+            : 'Drag & drop gambar menu ke sini, atau klik tombol di bawah untuk memilih file.'}
         </p>
 
         <button
@@ -95,7 +99,7 @@ export const MenuUploader: React.FC<MenuUploaderProps> = ({ onFileSelect, disabl
           className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-sm shadow-sm transition-all hover:shadow-md"
         >
           <ImageIcon className="w-4 h-4" />
-          Pilih Gambar
+          {mode === 'receipt' ? 'Pilih Foto Struk' : 'Pilih Gambar Menu'}
         </button>
 
         <span className="text-xs text-gray-400 mt-3">
@@ -112,3 +116,4 @@ export const MenuUploader: React.FC<MenuUploaderProps> = ({ onFileSelect, disabl
     </div>
   );
 };
+
