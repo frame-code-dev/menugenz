@@ -1,13 +1,14 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Sparkles, Utensils, Receipt, AlertCircle, Clock, ShieldCheck, Github, Globe, Linkedin } from 'lucide-react';
+import { Sparkles, Utensils, Receipt, Camera, AlertCircle, Clock, ShieldCheck, Github, Globe, Linkedin } from 'lucide-react';
 import { MenuUploader } from '@/components/menu-uploader';
 import { ImagePreview } from '@/components/image-preview';
 import { LoadingState } from '@/components/loading-state';
 import { CaptionEditor } from '@/components/caption-editor';
 import { WhatsAppForm } from '@/components/whatsapp-form';
 import { ReceiptBreakdown } from '@/components/receipt-breakdown';
+import { PasFotoEditor } from '@/components/pas-foto-editor';
 import { MenuResult } from '@/types/menu';
 import { AppMode, ReceiptResult } from '@/types/receipt';
 import { analyzeMenuImage, analyzeReceiptImage } from '@/lib/api';
@@ -106,7 +107,7 @@ export default function HomePage() {
 
   return (
     <main className="min-h-screen bg-slate-50 py-8 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-4xl mx-auto">
+      <div className={`${mode === 'pasfoto' ? 'max-w-6xl' : 'max-w-4xl'} mx-auto transition-all duration-300`}>
         {/* Header */}
         <header className="text-center mb-6">
           <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-emerald-100/80 text-emerald-800 text-xs font-bold tracking-wide uppercase mb-3 shadow-sm">
@@ -117,7 +118,7 @@ export default function HomePage() {
             MenuGenZ
           </h1>
           <p className="mt-2 text-sm sm:text-base text-slate-600 max-w-xl mx-auto font-medium">
-            AI Vision otomatis untuk generate caption menu & pembaca struk belanja ke WhatsApp.
+            AI Vision otomatis untuk generate caption menu, pembaca struk belanja & studio editor pas foto.
           </p>
 
           <div className="inline-flex items-center justify-center gap-1.5 mt-3 px-3.5 py-1.5 rounded-full bg-emerald-50 text-emerald-800 text-xs border border-emerald-200/70 shadow-2xs">
@@ -130,12 +131,12 @@ export default function HomePage() {
 
         {/* Mode Selector Tabs */}
         <div className="flex justify-center mb-6">
-          <div className="inline-flex p-1.5 rounded-2xl bg-slate-200/80 backdrop-blur-sm shadow-inner gap-1.5 border border-slate-300/60">
+          <div className="inline-flex p-1.5 rounded-2xl bg-slate-200/80 backdrop-blur-sm shadow-inner gap-1.5 border border-slate-300/60 overflow-x-auto max-w-full">
             <button
               type="button"
               onClick={() => handleModeChange('menu')}
               disabled={loading}
-              className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-xs sm:text-sm transition-all duration-200 ${
+              className={`inline-flex items-center gap-2 px-4 sm:px-5 py-2.5 rounded-xl font-semibold text-xs sm:text-sm transition-all duration-200 shrink-0 ${
                 mode === 'menu'
                   ? 'bg-white text-emerald-800 shadow-md shadow-slate-300/50 scale-[1.02]'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
@@ -149,7 +150,7 @@ export default function HomePage() {
               type="button"
               onClick={() => handleModeChange('receipt')}
               disabled={loading}
-              className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-xs sm:text-sm transition-all duration-200 ${
+              className={`inline-flex items-center gap-2 px-4 sm:px-5 py-2.5 rounded-xl font-semibold text-xs sm:text-sm transition-all duration-200 shrink-0 ${
                 mode === 'receipt'
                   ? 'bg-white text-emerald-800 shadow-md shadow-slate-300/50 scale-[1.02]'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
@@ -158,10 +159,32 @@ export default function HomePage() {
               <Receipt className="w-4 h-4" />
               <span>Baca Struk & Nota Belanja</span>
             </button>
+
+            <button
+              type="button"
+              onClick={() => handleModeChange('pasfoto')}
+              disabled={loading}
+              className={`inline-flex items-center gap-2 px-4 sm:px-5 py-2.5 rounded-xl font-semibold text-xs sm:text-sm transition-all duration-200 shrink-0 ${
+                mode === 'pasfoto'
+                  ? 'bg-white text-blue-800 shadow-md shadow-slate-300/50 scale-[1.02]'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+              } disabled:opacity-50`}
+            >
+              <Camera className="w-4 h-4" />
+              <span>Buat Pas Foto</span>
+            </button>
           </div>
         </div>
 
-        <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-xl shadow-slate-200/50 border border-slate-100 flex flex-col gap-6">
+        {mode === 'pasfoto' ? (
+          <PasFotoEditor
+            initialFile={selectedFile}
+            initialPreviewUrl={previewUrl}
+            onFileSelect={handleFileSelect}
+            onReset={resetState}
+          />
+        ) : (
+          <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-xl shadow-slate-200/50 border border-slate-100 flex flex-col gap-6">
           {/* Step 1: Upload or Preview */}
           {!previewUrl ? (
             <MenuUploader
@@ -275,7 +298,8 @@ export default function HomePage() {
               />
             </div>
           )}
-        </div>
+          </div>
+        )}
 
         {/* Footer */}
         <footer className="mt-12 pt-6 border-t border-slate-200/80 text-center flex flex-col items-center gap-3 text-xs text-slate-500">
