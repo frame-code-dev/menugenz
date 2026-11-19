@@ -1,8 +1,16 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { MessageSquare, ExternalLink, Smartphone, Download, Share2 } from 'lucide-react';
+import {
+  MessageSquare,
+  ExternalLink,
+  Smartphone,
+  Download,
+  Share2,
+  Info,
+} from 'lucide-react';
 import { openWhatsApp, normalizePhone } from '@/lib/whatsapp';
+import { isVideoFile } from '@/lib/video';
 
 interface WhatsAppFormProps {
   caption: string;
@@ -23,16 +31,17 @@ export const WhatsAppForm: React.FC<WhatsAppFormProps> = ({
   const [normalizedPreview, setNormalizedPreview] = useState('');
   const [canWebShare, setCanWebShare] = useState(false);
 
+  const isVideo = Boolean(imageFile && isVideoFile(imageFile));
+  const mediaLabel = isVideo ? 'Video' : 'Foto';
+
   const getTodayString = () => new Date().toISOString().split('T')[0];
 
-  // Check Web Share API capability on client
   useEffect(() => {
     if (typeof window !== 'undefined' && 'share' in navigator && 'canShare' in navigator) {
       setCanWebShare(true);
     }
   }, []);
 
-  // Load last used WhatsApp number from localStorage (with daily auto-reset)
   useEffect(() => {
     try {
       const savedRaw = localStorage.getItem(STORAGE_KEY);
@@ -83,19 +92,31 @@ export const WhatsAppForm: React.FC<WhatsAppFormProps> = ({
   const handleOpenWhatsApp = (e: React.FormEvent) => {
     e.preventDefault();
     if (!phone.trim() || !caption.trim()) return;
-
     openWhatsApp(phone, caption);
   };
 
-  const handleDownloadImage = () => {
+  const handleDownloadMedia = () => {
     if (!previewUrl && !imageFile) return;
 
+    const extMatch = imageFile?.name.match(/\.([a-zA-Z0-9]+)$/);
+    const ext = extMatch ? extMatch[1].toLowerCase() : isVideo ? 'mp4' : 'jpg';
+
     const link = document.createElement('a');
-    link.href = previewUrl || (imageFile ? URL.createObjectURL(imageFile) : '');
-    link.download = `MenuGenZ_${getTodayString()}.jpg`;
+    let tempUrl: string | null = null;
+    if (previewUrl) {
+      link.href = previewUrl;
+    } else if (imageFile) {
+      tempUrl = URL.createObjectURL(imageFile);
+      link.href = tempUrl;
+    }
+
+    link.download = `MenuGenZ_${getTodayString()}.${ext}`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    if (tempUrl) {
+      URL.revokeObjectURL(tempUrl);
+    }
   };
 
   const handleNativeShare = async () => {
@@ -113,63 +134,66 @@ export const WhatsAppForm: React.FC<WhatsAppFormProps> = ({
 
       await navigator.share(shareData);
     } catch {
-      // User cancelled share or error
+      // User cancelled share or unsupported
     }
   };
 
   return (
-    <div className="w-full mt-6 p-6 rounded-2xl bg-emerald-50/50 border border-emerald-200/80 flex flex-col gap-5">
+    <div className="w-full p-5 rounded-2xl bg-forest-50/55 border border-forest-100 flex flex-col gap-4">
       <form onSubmit={handleOpenWhatsApp} className="flex flex-col gap-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-emerald-900 font-semibold text-base">
-            <MessageSquare className="w-5 h-5 text-emerald-600" />
-            <span>Kirim via WhatsApp</span>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-forest-900 font-bold text-sm">
+            <MessageSquare className="w-4 h-4 text-forest-700" aria-hidden="true" />
+            <span>Bagikan ke WhatsApp</span>
           </div>
 
           {(previewUrl || imageFile) && (
             <button
               type="button"
-              onClick={handleDownloadImage}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-emerald-200 text-emerald-700 hover:bg-emerald-100 text-xs font-medium transition-all shadow-sm"
-              title="Unduh foto menu untuk dilampirkan"
+              onClick={handleDownloadMedia}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-surface border border-forest-200 text-forest-800 hover:bg-forest-50 text-xs font-semibold transition-colors"
             >
-              <Download className="w-3.5 h-3.5" />
-              Unduh Foto
+              <Download className="w-3.5 h-3.5" aria-hidden="true" />
+              <span>Unduh {mediaLabel}</span>
             </button>
           )}
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <label className="text-xs font-medium text-gray-700 flex items-center gap-1">
-            <Smartphone className="w-3.5 h-3.5 text-gray-500" />
-            Nomor WhatsApp Tujuan
+          <label
+            htmlFor="wa-phone-input"
+            className="text-xs font-semibold text-ink-muted flex items-center gap-1.5"
+          >
+            <Smartphone className="w-3.5 h-3.5" aria-hidden="true" />
+            <span>Nomor WhatsApp Tujuan</span>
           </label>
-          <div className="relative">
-            <input
-              type="tel"
-              value={phone}
-              onChange={handlePhoneChange}
-              placeholder="Contoh: 08123456789 atau 628123456789"
-              disabled={disabled}
-              className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 text-sm text-gray-800 bg-white outline-none transition-all placeholder:text-gray-400 disabled:bg-gray-50"
-            />
-          </div>
+          <input
+            id="wa-phone-input"
+            type="tel"
+            inputMode="tel"
+            value={phone}
+            onChange={handlePhoneChange}
+            placeholder="Contoh: 08123456789 atau 628123456789"
+            disabled={disabled}
+            className="w-full px-4 py-3 rounded-xl border border-border focus:border-forest-700 focus:ring-2 focus:ring-forest-700/15 text-sm text-ink bg-surface outline-none transition-colors placeholder:text-ink-faint disabled:bg-subtle"
+          />
           {normalizedPreview && (
-            <span className="text-[11px] text-emerald-700">
-              Format terisi di WhatsApp: <strong className="font-mono">+{normalizedPreview}</strong>
+            <span className="text-xs text-forest-800">
+              Format WhatsApp:{' '}
+              <strong className="font-mono">+{normalizedPreview}</strong>
             </span>
           )}
         </div>
 
-        <div className="flex flex-col sm:flex-row items-center gap-3">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
           <button
             type="submit"
             disabled={!phone.trim() || !caption.trim() || disabled}
-            className="w-full inline-flex items-center justify-center gap-2 py-3 px-6 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-sm shadow-sm transition-all hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex-1 inline-flex items-center justify-center gap-2 py-3 px-5 rounded-xl bg-forest-700 hover:bg-forest-800 text-white font-semibold text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <MessageSquare className="w-4 h-4 fill-white" />
-            Buka WhatsApp
-            <ExternalLink className="w-3.5 h-3.5 ml-1 opacity-80" />
+            <MessageSquare className="w-4 h-4" aria-hidden="true" />
+            <span>Buka WhatsApp</span>
+            <ExternalLink className="w-3.5 h-3.5 opacity-80" aria-hidden="true" />
           </button>
 
           {canWebShare && (
@@ -177,18 +201,22 @@ export const WhatsAppForm: React.FC<WhatsAppFormProps> = ({
               type="button"
               onClick={handleNativeShare}
               disabled={!caption.trim() || disabled}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 py-3 px-5 rounded-xl bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 font-medium text-sm shadow-sm transition-all shrink-0 disabled:opacity-50"
-              title="Share langsung dari HP dengan foto"
+              className="sm:w-auto inline-flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-surface border border-border hover:bg-subtle text-ink font-semibold text-sm transition-colors shrink-0 disabled:opacity-50"
             >
-              <Share2 className="w-4 h-4 text-emerald-600" />
-              Share HP (Dengan Foto)
+              <Share2 className="w-4 h-4 text-forest-700" aria-hidden="true" />
+              <span>Share HP (Dengan {mediaLabel})</span>
             </button>
           )}
         </div>
       </form>
 
-      <p className="text-[11px] text-emerald-800/80 leading-relaxed bg-emerald-100/40 p-3 rounded-xl border border-emerald-200/50">
-        💡 <strong>Tips Lampirkan Foto di WhatsApp:</strong> WhatsApp URL standar hanya mendukung pengisian teks caption secara otomatis. Untuk menyertakan foto menu, klik tombol <strong>Unduh Foto</strong> di atas, lalu lampirkan gambar tersebut di chat WhatsApp. (Pada HP Android/iOS, Anda juga dapat menggunakan tombol <strong>Share HP</strong>).
+      <p className="text-xs text-forest-900/80 leading-relaxed flex items-start gap-2 pt-1 border-t border-forest-100">
+        <Info className="w-3.5 h-3.5 text-forest-700 shrink-0 mt-0.5" aria-hidden="true" />
+        <span>
+          Tautan WhatsApp mengisi teks caption otomatis. Untuk melampirkan{' '}
+          {mediaLabel.toLowerCase()}, klik <strong>Unduh {mediaLabel}</strong>{' '}
+          atau gunakan tombol <strong>Share HP</strong> di ponsel Anda.
+        </span>
       </p>
     </div>
   );

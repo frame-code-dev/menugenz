@@ -2,9 +2,181 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --target-size: 24px;
+  --surface-canvas: #faf8f5;
+  --surface-card: #ffffff;
+  --accent-forest: #1b4332;
+}
+
+@media (pointer: coarse) {
+  :root {
+    --target-size: 44px;
+  }
+}
+
 @layer base {
+  html {
+    scroll-padding-top: 4.5rem;
+    scroll-padding-bottom: calc(5.25rem + env(safe-area-inset-bottom, 0px));
+    background-color: var(--surface-canvas);
+  }
+
   body {
-    @apply bg-slate-50 text-slate-900 antialiased min-h-screen selection:bg-emerald-500 selection:text-white;
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    @apply bg-canvas text-ink font-sans antialiased min-h-screen selection:bg-forest-700 selection:text-white;
+    overflow-wrap: break-word;
+  }
+
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+
+  p,
+  li {
+    text-wrap: pretty;
+  }
+
+  img,
+  video {
+    max-inline-size: 100%;
+  }
+
+  :where(a, code) {
+    overflow-wrap: anywhere;
+  }
+}
+
+/* Minimum touch target sizing on coarse pointers */
+@media (pointer: coarse) {
+  :where(
+    button:not([data-compact-target]),
+    select,
+    input:not([type='checkbox']):not([type='radio']),
+    [role='button'],
+    nav a
+  ) {
+    min-block-size: var(--target-size);
+    min-inline-size: var(--target-size);
+  }
+}
+
+/* Native <dialog> modal styling & scroll containment */
+dialog.app-dialog {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  max-width: none;
+  max-height: none;
+  width: 100%;
+  margin: auto;
+  overflow: visible;
+}
+
+dialog.app-dialog[open] {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+@media (min-width: 640px) {
+  dialog.app-dialog[open] {
+    align-items: center;
+    padding: 1rem;
+  }
+}
+
+dialog.app-dialog:modal {
+  overscroll-behavior: contain;
+}
+
+dialog.app-dialog::backdrop {
+  background: rgba(28, 25, 23, 0.56);
+  backdrop-filter: blur(4px);
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
+/* Responsive semantic table container */
+.mbg-table-wrapper {
+  overflow-x: auto;
+  max-inline-size: 100%;
+  container-type: inline-size;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mbg-table-wrapper:focus-visible {
+  outline: 2px solid var(--accent-forest);
+  outline-offset: 2px;
+}
+
+.mbg-matrix-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+}
+
+.mbg-matrix-table thead th {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 2;
+}
+
+.mbg-matrix-table tbody th {
+  position: sticky;
+  inset-inline-start: 0;
+  z-index: 1;
+}
+
+.mbg-matrix-table thead th:first-child {
+  position: sticky;
+  inset-inline-start: 0;
+  z-index: 3;
+}
+
+/* Safe area helpers for fixed mobile PWA bottom nav */
+.pwa-bottom-nav {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));
+  padding-left: max(0.5rem, env(safe-area-inset-left, 0px));
+  padding-right: max(0.5rem, env(safe-area-inset-right, 0px));
+}
+
+.pwa-safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* Subtle custom scrollbar for clean tables */
+.clean-scroll::-webkit-scrollbar {
+  height: 6px;
+  width: 6px;
+}
+
+.clean-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.clean-scroll::-webkit-scrollbar-thumb {
+  background: #d6d0c4;
+  border-radius: 999px;
+}
+
+/* Print optimization for MBG Weekly Schedule */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  .print-full {
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
   }
 }
