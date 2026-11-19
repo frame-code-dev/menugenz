@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Utensils,
   CalendarRange,
@@ -32,7 +32,12 @@ import { DailyMenuPlan } from '@/types/recommendation';
 import { analyzeMenuImage, analyzeReceiptImage } from '@/lib/api';
 import { generateCaption } from '@/lib/caption';
 import { generateReceiptCaption } from '@/lib/receipt';
-import { isVideoFile } from '@/lib/video';
+import {
+  IMAGE_MAX_BYTES,
+  VIDEO_MAX_BYTES,
+  isImageFile,
+  isVideoFile,
+} from '@/lib/video';
 import { MEAL_CATEGORIES } from '@/lib/mbg-menus';
 import { APP_VERSION_TAG } from '@/lib/version';
 
@@ -66,6 +71,7 @@ export default function HomePage() {
   const [captionStyle, setCaptionStyle] = useState<CaptionStyle>('formal_santai');
   const [caption, setCaption] = useState<string>('');
   const [isSupportModalOpen, setIsSupportModalOpen] = useState(false);
+  const analyzeLockRef = useRef(false);
 
   const isSelectedVideo = Boolean(selectedFile && isVideoFile(selectedFile));
 
@@ -95,10 +101,11 @@ export default function HomePage() {
   const handleModeChange = (newMode: AppMode) => {
     if (newMode === mode || loading) return;
     setMode(newMode);
-    if (newMode !== 'menu' && newMode !== 'receipt') {
+    if (newMode === 'recommend') {
       setErrorMessage(null);
       setIsRateLimited(false);
     } else {
+      // Prevent cross-workspace state bleed (e.g. menu video leaking into Pas Foto)
       resetState();
     }
   };
@@ -116,6 +123,33 @@ export default function HomePage() {
     setMenuResult(null);
     setReceiptResult(null);
     setCaption('');
+  };
+
+  const handleReplaceFile = (file: File) => {
+    const allowVideo = mode === 'menu';
+    const isImg = isImageFile(file);
+    const isVid = allowVideo && isVideoFile(file);
+
+    if (!isImg && !isVid) {
+      setErrorMessage(
+        allowVideo
+          ? 'Format tidak didukung. Pilih foto (JPG, PNG, WEBP) atau video (MP4, MOV, WEBM).'
+          : 'Format gambar struk harus JPG, JPEG, PNG, atau WEBP.'
+      );
+      return;
+    }
+
+    if (isImg && file.size > IMAGE_MAX_BYTES) {
+      setErrorMessage('Ukuran foto maksimal 10 MB.');
+      return;
+    }
+
+    if (isVid && file.size > VIDEO_MAX_BYTES) {
+      setErrorMessage('Ukuran video maksimal 50 MB.');
+      return;
+    }
+
+    handleFileSelect(file);
   };
 
   const handleRemoveMedia = () => {
@@ -158,50 +192,54 @@ export default function HomePage() {
   };
 
   const handleAnalyze = async () => {
-    if (!selectedFile) return;
+    if (!selectedFile || analyzeLockRef.current) return;
 
+    analyzeLockRef.current = true;
     setLoading(true);
     setErrorMessage(null);
     setIsRateLimited(false);
     setVideoExtractProgress(isVideoFile(selectedFile) ? 5 : null);
 
-    if (mode === 'menu') {
-      const result = await analyzeMenuImage(selectedFile, {
-        onVideoExtractProgress: (pct) => setVideoExtractProgress(pct),
-      });
+    try {
+      if (mode === 'menu') {
+        const result = await analyzeMenuImage(selectedFile, {
+          onVideoExtractProgress: (pct) => setVideoExtractProgress(pct),
+        });
+
+        if (result.success && result.data) {
+          setMenuResult(result.data);
+          const generated = generateCaption(result.data, captionStyle);
+          setCaption(generated);
+        } else {
+          if (result.isRateLimited) {
+            setIsRateLimited(true);
+          }
+          setErrorMessage(
+            result.message ||
+              'AI gagal membaca media menu. Pastikan foto atau video terlihat terang dan jelas.'
+          );
+        }
+      } else if (mode === 'receipt') {
+        const result = await analyzeReceiptImage(selectedFile);
+
+        if (result.success && result.data) {
+          setReceiptResult(result.data);
+          const generated = generateReceiptCaption(result.data);
+          setCaption(generated);
+        } else {
+          if (result.isRateLimited) {
+            setIsRateLimited(true);
+          }
+          setErrorMessage(
+            result.message ||
+              'AI gagal membaca struk belanja. Pastikan foto struk terlihat jelas dan cukup cahaya.'
+          );
+        }
+      }
+    } finally {
+      analyzeLockRef.current = false;
       setLoading(false);
       setVideoExtractProgress(null);
-
-      if (result.success && result.data) {
-        setMenuResult(result.data);
-        const generated = generateCaption(result.data, captionStyle);
-        setCaption(generated);
-      } else {
-        if (result.isRateLimited) {
-          setIsRateLimited(true);
-        }
-        setErrorMessage(
-          result.message ||
-            'AI gagal membaca media menu. Pastikan foto atau video terlihat terang dan jelas.'
-        );
-      }
-    } else if (mode === 'receipt') {
-      const result = await analyzeReceiptImage(selectedFile);
-      setLoading(false);
-
-      if (result.success && result.data) {
-        setReceiptResult(result.data);
-        const generated = generateReceiptCaption(result.data);
-        setCaption(generated);
-      } else {
-        if (result.isRateLimited) {
-          setIsRateLimited(true);
-        }
-        setErrorMessage(
-          result.message ||
-            'AI gagal membaca struk belanja. Pastikan foto struk terlihat jelas dan cukup cahaya.'
-        );
-      }
     }
   };
 
@@ -326,8 +364,8 @@ export default function HomePage() {
             <MbgRecommender onUseDayAsCaption={handleUseRecommendedDayAsCaption} />
           ) : mode === 'pasfoto' ? (
             <PasFotoEditor
-              initialFile={selectedFile}
-              initialPreviewUrl={previewUrl}
+              initialFile={selectedFile && isImageFile(selectedFile) ? selectedFile : null}
+              initialPreviewUrl={selectedFile && isImageFile(selectedFile) ? previewUrl : null}
               onFileSelect={handleFileSelect}
               onReset={resetState}
             />
@@ -362,7 +400,7 @@ export default function HomePage() {
                           : 'image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp';
                       input.onchange = (e: Event) => {
                         const files = (e.target as HTMLInputElement).files;
-                        if (files && files[0]) handleFileSelect(files[0]);
+                        if (files && files[0]) handleReplaceFile(files[0]);
                       };
                       input.click();
                     }}
@@ -459,7 +497,7 @@ export default function HomePage() {
               {hasResult && (
                 <div className="flex flex-col gap-6 pt-5 border-t border-border">
                   {mode === 'receipt' && receiptResult && (
-                    <ReceiptBreakdown data={receiptResult} />
+                    <ReceiptBreakdown data={receiptResult} caption={caption} />
                   )}
 
                   <CaptionEditor
@@ -470,6 +508,7 @@ export default function HomePage() {
                     captionStyle={captionStyle}
                     onStyleChange={mode === 'menu' ? handleCaptionStyleChange : undefined}
                     menuResult={mode === 'menu' ? menuResult : null}
+                    sourceFileName={selectedFile?.name}
                     title={
                       mode === 'receipt'
                         ? 'Draft Laporan Belanja WhatsApp'

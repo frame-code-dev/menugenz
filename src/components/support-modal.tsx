@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { useDialogLightDismiss } from '@/components/recipe-detail-dialog';
 import { APP_CHANGELOG, APP_VERSION_TAG } from '@/lib/version';
+import { copyTextToClipboard } from '@/lib/clipboard';
 
 interface SupportModalProps {
   isOpen: boolean;
@@ -33,24 +34,10 @@ export function SupportModal({ isOpen, onClose }: SupportModalProps) {
   useDialogLightDismiss(dialogRef, isOpen, onClose);
 
   const handleCopy = async () => {
-    try {
-      if (navigator?.clipboard?.writeText) {
-        await navigator.clipboard.writeText(accountNumber);
-      } else {
-        const textArea = document.createElement('textarea');
-        textArea.value = accountNumber;
-        textArea.style.position = 'fixed';
-        textArea.style.opacity = '0';
-        document.body.appendChild(textArea);
-        textArea.focus();
-        textArea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textArea);
-      }
+    const ok = await copyTextToClipboard(accountNumber);
+    if (ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
-    } catch (err) {
-      console.error('Gagal menyalin nomor rekening:', err);
     }
   };
 

@@ -9,9 +9,19 @@ import {
   Calendar,
   Users,
   Utensils,
+  FileDown,
+  FileSpreadsheet,
+  Loader2,
+  AlertCircle,
+  CheckCircle2,
 } from 'lucide-react';
 import { CaptionStyle, MenuResult } from '@/types/menu';
 import { formatIndonesianDate } from '@/lib/caption';
+import { copyTextToClipboard } from '@/lib/clipboard';
+import {
+  exportMenuAnalysisToExcel,
+  exportMenuAnalysisToPdf,
+} from '@/lib/export-reports';
 
 interface CaptionEditorProps {
   caption: string;
@@ -21,6 +31,7 @@ interface CaptionEditorProps {
   captionStyle?: CaptionStyle;
   onStyleChange?: (style: CaptionStyle) => void;
   menuResult?: MenuResult | null;
+  sourceFileName?: string | null;
   title?: string;
 }
 
@@ -38,53 +49,125 @@ export const CaptionEditor: React.FC<CaptionEditorProps> = ({
   captionStyle = 'formal_santai',
   onStyleChange,
   menuResult,
+  sourceFileName,
   title = 'Draft Caption Siap Bagikan',
 }) => {
   const [copied, setCopied] = useState(false);
+  const [exportingFormat, setExportingFormat] = useState<'pdf' | 'excel' | null>(null);
+  const [feedback, setFeedback] = useState<{
+    type: 'success' | 'error';
+    message: string;
+  } | null>(null);
+
+  const showFeedback = (type: 'success' | 'error', message: string) => {
+    setFeedback({ type, message });
+    setTimeout(() => {
+      setFeedback((prev) => (prev?.message === message ? null : prev));
+    }, 4500);
+  };
 
   const handleCopy = async () => {
     if (!caption) return;
+    const ok = await copyTextToClipboard(caption);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2400);
+    } else {
+      showFeedback('error', 'Gagal menyalin caption ke clipboard perangkat.');
+    }
+  };
+
+  const activeStyleLabel =
+    STYLE_OPTIONS.find((opt) => opt.id === captionStyle)?.label || 'Formal Santai';
+
+  const handleExport = async (format: 'pdf' | 'excel') => {
+    if (!menuResult || menuResult.menus.length === 0 || exportingFormat) return;
+    setExportingFormat(format);
+    setFeedback(null);
     try {
-      await navigator.clipboard.writeText(caption);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2400);
-    } catch {
-      const ta = document.createElement('textarea');
-      ta.value = caption;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2400);
+      const payload = {
+        result: menuResult,
+        caption,
+        captionStyleLabel: activeStyleLabel,
+        sourceFileName,
+      };
+      const filename =
+        format === 'pdf'
+          ? await exportMenuAnalysisToPdf(payload)
+          : await exportMenuAnalysisToExcel(payload);
+      showFeedback(
+        'success',
+        `${format === 'pdf' ? 'Laporan PDF' : 'File Excel'} berhasil diunduh: ${filename}`
+      );
+    } catch (err) {
+      showFeedback(
+        'error',
+        err instanceof Error
+          ? err.message
+          : `Gagal mengekspor analisis menu ke ${format.toUpperCase()}.`
+      );
+    } finally {
+      setExportingFormat(null);
     }
   };
 
   return (
     <div className="w-full flex flex-col gap-4">
-      {/* Structured summary chips when MenuResult is available */}
+      {/* Structured summary chips + Export PDF/Excel when MenuResult is available */}
       {menuResult && menuResult.menus.length > 0 && (
         <div className="p-4 rounded-2xl bg-subtle/70 border border-border flex flex-col gap-3">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-ink-muted">
-            <span className="font-semibold text-ink inline-flex items-center gap-1.5">
-              <Utensils className="w-3.5 h-3.5 text-forest-700" aria-hidden="true" />
-              Terdeteksi {menuResult.menus.length} item menu
-            </span>
-            {menuResult.date && (
-              <span className="inline-flex items-center gap-1">
-                <Calendar className="w-3.5 h-3.5 text-ink-faint" aria-hidden="true" />
-                {formatIndonesianDate(menuResult.date)}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-ink-muted">
+              <span className="font-semibold text-ink inline-flex items-center gap-1.5">
+                <Utensils className="w-3.5 h-3.5 text-forest-700" aria-hidden="true" />
+                Terdeteksi {menuResult.menus.length} item menu
               </span>
-            )}
-            {menuResult.recipients.length > 0 && (
-              <span className="inline-flex items-center gap-1">
-                <Users className="w-3.5 h-3.5 text-ink-faint" aria-hidden="true" />
-                {menuResult.recipients.join(', ')}
-              </span>
-            )}
+              {menuResult.date && (
+                <span className="inline-flex items-center gap-1">
+                  <Calendar className="w-3.5 h-3.5 text-ink-faint" aria-hidden="true" />
+                  {formatIndonesianDate(menuResult.date)}
+                </span>
+              )}
+              {menuResult.recipients.length > 0 && (
+                <span className="inline-flex items-center gap-1">
+                  <Users className="w-3.5 h-3.5 text-ink-faint" aria-hidden="true" />
+                  {menuResult.recipients.join(', ')}
+                </span>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => handleExport('pdf')}
+                disabled={disabled || exportingFormat !== null}
+                data-compact-target="true"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-surface hover:bg-forest-50 border border-border hover:border-forest-600/40 text-xs font-semibold text-ink transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {exportingFormat === 'pdf' ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-forest-700" aria-hidden="true" />
+                ) : (
+                  <FileDown className="w-3.5 h-3.5 text-rose-700" aria-hidden="true" />
+                )}
+                <span>Export PDF</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleExport('excel')}
+                disabled={disabled || exportingFormat !== null}
+                data-compact-target="true"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-surface hover:bg-forest-50 border border-border hover:border-forest-600/40 text-xs font-semibold text-ink transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {exportingFormat === 'excel' ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-forest-700" aria-hidden="true" />
+                ) : (
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-forest-700" aria-hidden="true" />
+                )}
+                <span>Export Excel</span>
+              </button>
+            </div>
           </div>
+
           <div className="flex flex-wrap gap-1.5">
             {menuResult.menus.map((item, idx) => (
               <span
@@ -95,6 +178,24 @@ export const CaptionEditor: React.FC<CaptionEditorProps> = ({
               </span>
             ))}
           </div>
+        </div>
+      )}
+
+      {feedback && (
+        <div
+          role={feedback.type === 'error' ? 'alert' : 'status'}
+          className={`px-3.5 py-2.5 rounded-xl border text-xs flex items-center gap-2 ${
+            feedback.type === 'error'
+              ? 'bg-rose-50 border-rose-200 text-rose-900'
+              : 'bg-forest-50 border-forest-100 text-forest-900'
+          }`}
+        >
+          {feedback.type === 'error' ? (
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" aria-hidden="true" />
+          ) : (
+            <CheckCircle2 className="w-4 h-4 text-forest-700 shrink-0" aria-hidden="true" />
+          )}
+          <span className="break-all">{feedback.message}</span>
         </div>
       )}
 
@@ -123,6 +224,7 @@ export const CaptionEditor: React.FC<CaptionEditorProps> = ({
                     type="button"
                     onClick={() => onStyleChange(opt.id)}
                     disabled={disabled}
+                    aria-pressed={active}
                     title={opt.hint}
                     data-compact-target="true"
                     className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${

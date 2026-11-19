@@ -9,6 +9,9 @@ import {
   ZoomOut,
   ArrowLeft,
   ArrowRight,
+  ArrowUp,
+  ArrowDown,
+  Crosshair,
   SlidersHorizontal,
   Image as ImageIcon,
   Check,
@@ -19,6 +22,7 @@ import {
   Download,
   CheckCircle2,
   Ruler,
+  AlertCircle,
 } from 'lucide-react';
 import {
   PasFotoSizeId,
@@ -28,7 +32,83 @@ import {
   TransformState,
 } from '@/types/pasfoto';
 import { PAS_FOTO_SIZES, downloadCroppedPasFoto } from '@/lib/pasfoto';
+import { IMAGE_MAX_BYTES, formatFileSize, isImageFile } from '@/lib/video';
 import { useDialogLightDismiss } from '@/components/recipe-detail-dialog';
+
+function createDemoPortraitDataUrl(): string | null {
+  if (typeof document === 'undefined') return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = 800;
+  canvas.height = 1000;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+
+  const gradient = ctx.createLinearGradient(0, 0, 800, 1000);
+  gradient.addColorStop(0, '#0f4c81');
+  gradient.addColorStop(1, '#09355c');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, 800, 1000);
+
+  ctx.fillStyle = '#1e293b';
+  ctx.beginPath();
+  ctx.moveTo(150, 1000);
+  ctx.quadraticCurveTo(240, 680, 400, 680);
+  ctx.quadraticCurveTo(560, 680, 650, 1000);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.moveTo(350, 680);
+  ctx.lineTo(450, 680);
+  ctx.lineTo(400, 820);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = '#0f172a';
+  ctx.beginPath();
+  ctx.moveTo(390, 710);
+  ctx.lineTo(410, 710);
+  ctx.lineTo(420, 920);
+  ctx.lineTo(400, 960);
+  ctx.lineTo(380, 920);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = '#f8d2b8';
+  ctx.fillRect(365, 580, 70, 110);
+
+  ctx.beginPath();
+  ctx.ellipse(400, 480, 140, 180, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = '#1e293b';
+  ctx.beginPath();
+  ctx.ellipse(400, 360, 150, 100, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = '#334155';
+  ctx.fillRect(340, 460, 30, 8);
+  ctx.fillRect(430, 460, 30, 8);
+  ctx.beginPath();
+  ctx.arc(355, 485, 8, 0, Math.PI * 2);
+  ctx.arc(445, 485, 8, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = '#e29d7e';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(400, 490);
+  ctx.lineTo(400, 530);
+  ctx.lineTo(410, 535);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(400, 565, 25, 0.2, Math.PI - 0.2);
+  ctx.stroke();
+
+  return canvas.toDataURL('image/jpeg', 0.9);
+}
 
 interface PasFotoEditorProps {
   initialFile?: File | null;
@@ -59,18 +139,18 @@ export const PasFotoEditor: React.FC<PasFotoEditorProps> = ({
   const [imageUrl, setImageUrl] = useState<string | null>(initialPreviewUrl || null);
   const [fileName, setFileName] = useState<string>(initialFile?.name || 'Contoh_PasFoto.jpg');
   const [fileSizeStr, setFileSizeStr] = useState<string>(
-    initialFile ? `${(initialFile.size / (1024 * 1024)).toFixed(1)} MB` : 'Contoh bawaan'
+    initialFile ? formatFileSize(initialFile.size) : 'Contoh bawaan'
   );
   const [hasUserPhoto, setHasUserPhoto] = useState<boolean>(Boolean(initialFile));
   const [showSizeModal, setShowSizeModal] = useState<boolean>(false);
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
+  const [editorError, setEditorError] = useState<string | null>(null);
 
   const imageRef = useRef<HTMLImageElement | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const miniCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sizeDialogRef = useRef<HTMLDialogElement>(null);
-  const ownedObjectUrlRef = useRef<string | null>(null);
 
   const isDraggingRef = useRef<boolean>(false);
   const dragStartPos = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -81,119 +161,42 @@ export const PasFotoEditor: React.FC<PasFotoEditorProps> = ({
   const currentSizeOption: PasFotoSizeOption =
     PAS_FOTO_SIZES.find((s) => s.id === selectedSizeId) || PAS_FOTO_SIZES[1];
 
-  // Cleanup any locally created object URL on unmount
-  useEffect(() => {
-    return () => {
-      if (ownedObjectUrlRef.current) {
-        URL.revokeObjectURL(ownedObjectUrlRef.current);
-        ownedObjectUrlRef.current = null;
-      }
-    };
-  }, []);
-
-  // Load initial file or generate neutral demo portrait canvas
+  // Sync with parent-managed photo or generate neutral demo portrait canvas
   useEffect(() => {
     if (initialFile && initialPreviewUrl) {
       setImageUrl(initialPreviewUrl);
       setFileName(initialFile.name);
-      setFileSizeStr(`${(initialFile.size / (1024 * 1024)).toFixed(1)} MB`);
+      setFileSizeStr(formatFileSize(initialFile.size));
       setHasUserPhoto(true);
+      setEditorError(null);
       return;
     }
 
-    if (!imageUrl) {
-      const canvas = document.createElement('canvas');
-      canvas.width = 800;
-      canvas.height = 1000;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        const gradient = ctx.createLinearGradient(0, 0, 800, 1000);
-        gradient.addColorStop(0, '#0f4c81');
-        gradient.addColorStop(1, '#09355c');
-        ctx.fillStyle = gradient;
-        ctx.fillRect(0, 0, 800, 1000);
-
-        ctx.fillStyle = '#1e293b';
-        ctx.beginPath();
-        ctx.moveTo(150, 1000);
-        ctx.quadraticCurveTo(240, 680, 400, 680);
-        ctx.quadraticCurveTo(560, 680, 650, 1000);
-        ctx.closePath();
-        ctx.fill();
-
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath();
-        ctx.moveTo(350, 680);
-        ctx.lineTo(450, 680);
-        ctx.lineTo(400, 820);
-        ctx.closePath();
-        ctx.fill();
-
-        ctx.fillStyle = '#0f172a';
-        ctx.beginPath();
-        ctx.moveTo(390, 710);
-        ctx.lineTo(410, 710);
-        ctx.lineTo(420, 920);
-        ctx.lineTo(400, 960);
-        ctx.lineTo(380, 920);
-        ctx.closePath();
-        ctx.fill();
-
-        ctx.fillStyle = '#f8d2b8';
-        ctx.fillRect(365, 580, 70, 110);
-
-        ctx.beginPath();
-        ctx.ellipse(400, 480, 140, 180, 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.fillStyle = '#1e293b';
-        ctx.beginPath();
-        ctx.ellipse(400, 360, 150, 100, 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.fillStyle = '#334155';
-        ctx.fillRect(340, 460, 30, 8);
-        ctx.fillRect(430, 460, 30, 8);
-        ctx.beginPath();
-        ctx.arc(355, 485, 8, 0, Math.PI * 2);
-        ctx.arc(445, 485, 8, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.strokeStyle = '#e29d7e';
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.moveTo(400, 490);
-        ctx.lineTo(400, 530);
-        ctx.lineTo(410, 535);
-        ctx.stroke();
-
-        ctx.beginPath();
-        ctx.arc(400, 565, 25, 0.2, Math.PI - 0.2);
-        ctx.stroke();
-
-        setImageUrl(canvas.toDataURL('image/jpeg', 0.9));
-        setFileName('Contoh_PasFoto.jpg');
-        setFileSizeStr('Contoh bawaan');
-        setHasUserPhoto(false);
-      }
-    }
-  }, [initialFile, initialPreviewUrl, imageUrl]);
+    const demoUrl = createDemoPortraitDataUrl();
+    setImageUrl(demoUrl);
+    setFileName('Contoh_PasFoto.jpg');
+    setFileSizeStr('Contoh bawaan');
+    setHasUserPhoto(false);
+  }, [initialFile, initialPreviewUrl]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
-      if (ownedObjectUrlRef.current) {
-        URL.revokeObjectURL(ownedObjectUrlRef.current);
-      }
-      const url = URL.createObjectURL(file);
-      ownedObjectUrlRef.current = url;
-      setImageUrl(url);
-      setFileName(file.name);
-      setFileSizeStr(`${(file.size / (1024 * 1024)).toFixed(1)} MB`);
-      setHasUserPhoto(true);
-      setTransform({ zoom: 1, rotate: 0, panX: 0, panY: 0 });
-      onFileSelect(file);
       e.target.value = '';
+
+      if (!isImageFile(file)) {
+        setEditorError('Format tidak didukung. Pilih foto berformat JPG, JPEG, PNG, atau WEBP.');
+        return;
+      }
+      if (file.size > IMAGE_MAX_BYTES) {
+        setEditorError('Ukuran foto terlalu besar. Maksimal 10 MB.');
+        return;
+      }
+
+      setEditorError(null);
+      setTransform({ zoom: 1, rotate: 0, panX: 0, panY: 0 });
+      // Parent owns the single ObjectURL and passes it back via initialPreviewUrl
+      onFileSelect(file);
     }
   };
 
@@ -201,15 +204,35 @@ export const PasFotoEditor: React.FC<PasFotoEditorProps> = ({
     setTransform({ zoom: 1, rotate: 0, panX: 0, panY: 0 });
     setSelectedSizeId('3x4');
     setSettings({ showFrame: true, showGrid: true, quality: 'high' });
+    setEditorError(null);
+    setImageUrl(createDemoPortraitDataUrl());
+    setFileName('Contoh_PasFoto.jpg');
+    setFileSizeStr('Contoh bawaan');
+    setHasUserPhoto(false);
     onReset();
   };
 
-  const handleZoom = (delta: number) => {
+  const handleZoom = useCallback((delta: number) => {
     setTransform((prev) => ({
       ...prev,
       zoom: Math.min(Math.max(Number((prev.zoom + delta).toFixed(2)), 0.5), 3.0),
     }));
-  };
+  }, []);
+
+  // Attach native non-passive wheel listener so preventDefault works without browser warnings
+  useEffect(() => {
+    const frameEl = frameRef.current;
+    if (!frameEl) return;
+    const onNativeWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const delta = event.deltaY < 0 ? 0.06 : -0.06;
+      handleZoom(delta);
+    };
+    frameEl.addEventListener('wheel', onNativeWheel, { passive: false });
+    return () => {
+      frameEl.removeEventListener('wheel', onNativeWheel);
+    };
+  }, [handleZoom]);
 
   const handleRotate = (angleDelta: number) => {
     setTransform((prev) => ({
@@ -218,11 +241,16 @@ export const PasFotoEditor: React.FC<PasFotoEditorProps> = ({
     }));
   };
 
-  const handlePanNudge = (deltaX: number) => {
+  const handlePanNudge = (deltaX: number, deltaY = 0) => {
     setTransform((prev) => ({
       ...prev,
       panX: prev.panX + deltaX,
+      panY: prev.panY + deltaY,
     }));
+  };
+
+  const handleResetPosition = () => {
+    setTransform({ zoom: 1, rotate: 0, panX: 0, panY: 0 });
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -268,12 +296,6 @@ export const PasFotoEditor: React.FC<PasFotoEditorProps> = ({
 
   const handleTouchEnd = () => {
     isDraggingRef.current = false;
-  };
-
-  const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    const delta = e.deltaY < 0 ? 0.05 : -0.05;
-    handleZoom(delta);
   };
 
   const updateMiniPreview = useCallback(() => {
@@ -329,6 +351,7 @@ export const PasFotoEditor: React.FC<PasFotoEditorProps> = ({
     if (!imageRef.current || !frameRef.current) return;
     try {
       setIsDownloading(true);
+      setEditorError(null);
       const frameRect = frameRef.current.getBoundingClientRect();
       await downloadCroppedPasFoto(
         imageRef.current,
@@ -340,7 +363,11 @@ export const PasFotoEditor: React.FC<PasFotoEditorProps> = ({
         `PasFoto_${selectedSizeId}_${Date.now()}.jpg`
       );
     } catch (err) {
-      console.error('Download error:', err);
+      setEditorError(
+        err instanceof Error
+          ? err.message
+          : 'Gagal menyiapkan file Pas Foto. Silakan coba kembali.'
+      );
     } finally {
       setIsDownloading(false);
     }
@@ -391,6 +418,27 @@ export const PasFotoEditor: React.FC<PasFotoEditorProps> = ({
           </button>
         </div>
       </div>
+
+      {editorError && (
+        <div
+          role="alert"
+          className="px-4 py-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-xs flex items-center justify-between gap-3"
+        >
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" aria-hidden="true" />
+            <span>{editorError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setEditorError(null)}
+            aria-label="Tutup pesan kesalahan"
+            data-compact-target="true"
+            className="p-1 rounded-lg hover:bg-rose-100 text-rose-700 cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" aria-hidden="true" />
+          </button>
+        </div>
+      )}
 
       {/* 3-Column Studio Workspace (Canvas first on mobile!) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -561,7 +609,6 @@ export const PasFotoEditor: React.FC<PasFotoEditorProps> = ({
               onTouchStart={handleTouchStart}
               onTouchMove={handleTouchMove}
               onTouchEnd={handleTouchEnd}
-              onWheel={handleWheel}
               style={{
                 aspectRatio: `${currentSizeOption.widthMm} / ${currentSizeOption.heightMm}`,
                 maxHeight: '100%',
@@ -616,67 +663,98 @@ export const PasFotoEditor: React.FC<PasFotoEditorProps> = ({
           </div>
 
           {/* Controls Toolbar */}
-          <div className="grid grid-cols-3 gap-2">
-            <div className="p-1.5 rounded-xl bg-surface border border-border flex items-center justify-between">
-              <button
-                type="button"
-                onClick={() => handleZoom(-0.1)}
-                aria-label="Perkecil foto"
-                className="p-1.5 rounded-lg hover:bg-subtle text-ink transition-colors cursor-pointer"
-              >
-                <ZoomOut className="w-4 h-4" aria-hidden="true" />
-              </button>
-              <span className="text-xs font-mono font-bold text-ink">
-                {Math.round(transform.zoom * 100)}%
-              </span>
-              <button
-                type="button"
-                onClick={() => handleZoom(0.1)}
-                aria-label="Perbesar foto"
-                className="p-1.5 rounded-lg hover:bg-subtle text-ink transition-colors cursor-pointer"
-              >
-                <ZoomIn className="w-4 h-4" aria-hidden="true" />
-              </button>
-            </div>
+          <div className="flex flex-col gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              <div className="p-1.5 rounded-xl bg-surface border border-border flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => handleZoom(-0.1)}
+                  aria-label="Perkecil foto"
+                  className="p-1.5 rounded-lg hover:bg-subtle text-ink transition-colors cursor-pointer"
+                >
+                  <ZoomOut className="w-4 h-4" aria-hidden="true" />
+                </button>
+                <span className="text-xs font-mono font-bold text-ink">
+                  {Math.round(transform.zoom * 100)}%
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleZoom(0.1)}
+                  aria-label="Perbesar foto"
+                  className="p-1.5 rounded-lg hover:bg-subtle text-ink transition-colors cursor-pointer"
+                >
+                  <ZoomIn className="w-4 h-4" aria-hidden="true" />
+                </button>
+              </div>
 
-            <div className="p-1.5 rounded-xl bg-surface border border-border flex items-center justify-between">
-              <button
-                type="button"
-                onClick={() => handleRotate(-90)}
-                aria-label="Putar kiri 90 derajat"
-                className="p-1.5 rounded-lg hover:bg-subtle text-ink transition-colors cursor-pointer"
-              >
-                <RotateCcw className="w-4 h-4" aria-hidden="true" />
-              </button>
-              <span className="text-xs font-medium text-ink-muted">Putar</span>
-              <button
-                type="button"
-                onClick={() => handleRotate(90)}
-                aria-label="Putar kanan 90 derajat"
-                className="p-1.5 rounded-lg hover:bg-subtle text-ink transition-colors cursor-pointer"
-              >
-                <RotateCw className="w-4 h-4" aria-hidden="true" />
-              </button>
-            </div>
+              <div className="p-1.5 rounded-xl bg-surface border border-border flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => handleRotate(-90)}
+                  aria-label="Putar kiri 90 derajat"
+                  className="p-1.5 rounded-lg hover:bg-subtle text-ink transition-colors cursor-pointer"
+                >
+                  <RotateCcw className="w-4 h-4" aria-hidden="true" />
+                </button>
+                <span className="text-xs font-medium text-ink-muted">Putar</span>
+                <button
+                  type="button"
+                  onClick={() => handleRotate(90)}
+                  aria-label="Putar kanan 90 derajat"
+                  className="p-1.5 rounded-lg hover:bg-subtle text-ink transition-colors cursor-pointer"
+                >
+                  <RotateCw className="w-4 h-4" aria-hidden="true" />
+                </button>
+              </div>
 
-            <div className="p-1.5 rounded-xl bg-surface border border-border flex items-center justify-between">
-              <button
-                type="button"
-                onClick={() => handlePanNudge(-10)}
-                aria-label="Geser ke kiri"
-                className="p-1.5 rounded-lg hover:bg-subtle text-ink transition-colors cursor-pointer"
-              >
-                <ArrowLeft className="w-4 h-4" aria-hidden="true" />
-              </button>
-              <span className="text-xs font-medium text-ink-muted">Geser</span>
-              <button
-                type="button"
-                onClick={() => handlePanNudge(10)}
-                aria-label="Geser ke kanan"
-                className="p-1.5 rounded-lg hover:bg-subtle text-ink transition-colors cursor-pointer"
-              >
-                <ArrowRight className="w-4 h-4" aria-hidden="true" />
-              </button>
+              <div className="col-span-2 sm:col-span-1 p-1.5 rounded-xl bg-surface border border-border flex items-center justify-between gap-0.5">
+                <button
+                  type="button"
+                  onClick={() => handlePanNudge(-10, 0)}
+                  aria-label="Geser ke kiri"
+                  data-compact-target="true"
+                  className="p-1.5 rounded-lg hover:bg-subtle text-ink transition-colors cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePanNudge(0, -10)}
+                  aria-label="Geser ke atas"
+                  data-compact-target="true"
+                  className="p-1.5 rounded-lg hover:bg-subtle text-ink transition-colors cursor-pointer"
+                >
+                  <ArrowUp className="w-3.5 h-3.5" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleResetPosition}
+                  aria-label="Pusatkan posisi foto"
+                  title="Pusatkan posisi, zoom & rotasi"
+                  data-compact-target="true"
+                  className="p-1.5 rounded-lg hover:bg-subtle text-forest-700 transition-colors cursor-pointer"
+                >
+                  <Crosshair className="w-3.5 h-3.5" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePanNudge(0, 10)}
+                  aria-label="Geser ke bawah"
+                  data-compact-target="true"
+                  className="p-1.5 rounded-lg hover:bg-subtle text-ink transition-colors cursor-pointer"
+                >
+                  <ArrowDown className="w-3.5 h-3.5" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePanNudge(10, 0)}
+                  aria-label="Geser ke kanan"
+                  data-compact-target="true"
+                  className="p-1.5 rounded-lg hover:bg-subtle text-ink transition-colors cursor-pointer"
+                >
+                  <ArrowRight className="w-3.5 h-3.5" aria-hidden="true" />
+                </button>
+              </div>
             </div>
           </div>
 

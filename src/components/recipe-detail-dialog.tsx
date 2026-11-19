@@ -26,6 +26,7 @@ import {
   MEAL_CATEGORIES,
   scaleNutrition,
 } from '@/lib/mbg-menus';
+import { copyTextToClipboard } from '@/lib/clipboard';
 
 /**
  * Attach Safari-compatible light-dismiss fallback for native <dialog closedby="any">
@@ -144,19 +145,8 @@ export function RecipeDetailDialog({
   const handleCopyRecipe = async () => {
     if (!dish || !day) return;
     const text = formatRecipeTextForShare(dish, day.dayLabel, portions, targetGroup);
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2200);
-    } catch {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
+    const ok = await copyTextToClipboard(text);
+    if (ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2200);
     }
@@ -513,12 +503,10 @@ export function ShoppingListDialog({
     }
 
     const text = lines.join('\n');
-    try {
-      await navigator.clipboard.writeText(text);
+    const ok = await copyTextToClipboard(text);
+    if (ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2200);
-    } catch {
-      // Fallback
     }
   };
 
@@ -553,35 +541,41 @@ export function ShoppingListDialog({
         </div>
 
         <div className="p-5 overflow-y-auto flex-1 flex flex-col gap-5">
-          {grouped.map((g) => {
-            const list = items.filter((i) => i.group === g.key);
-            if (list.length === 0) return null;
-            return (
-              <section key={g.key}>
-                <h3 className="text-xs font-bold uppercase tracking-wider text-ink-muted mb-2">
-                  {g.label} ({list.length})
-                </h3>
-                <ul className="divide-y divide-border rounded-2xl border border-border overflow-hidden">
-                  {list.map((item, idx) => (
-                    <li
-                      key={`${item.name}-${idx}`}
-                      className="px-3.5 py-2.5 flex items-center justify-between gap-3 text-sm bg-surface"
-                    >
-                      <div className="min-w-0">
-                        <span className="font-medium text-ink block">{item.name}</span>
-                        <span className="text-[11px] text-ink-faint">
-                          Dipakai: {item.usedInDays.join(', ')}
+          {items.length === 0 ? (
+            <div className="py-10 px-4 text-center rounded-2xl bg-subtle/40 border border-dashed border-border text-xs text-ink-muted">
+              Belum ada daftar bahan belanja untuk filter menu yang aktif.
+            </div>
+          ) : (
+            grouped.map((g) => {
+              const list = items.filter((i) => i.group === g.key);
+              if (list.length === 0) return null;
+              return (
+                <section key={g.key}>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-ink-muted mb-2">
+                    {g.label} ({list.length})
+                  </h3>
+                  <ul className="divide-y divide-border rounded-2xl border border-border overflow-hidden">
+                    {list.map((item, idx) => (
+                      <li
+                        key={`${item.name}-${idx}`}
+                        className="px-3.5 py-2.5 flex items-center justify-between gap-3 text-sm bg-surface"
+                      >
+                        <div className="min-w-0">
+                          <span className="font-medium text-ink block">{item.name}</span>
+                          <span className="text-[11px] text-ink-faint">
+                            Dipakai: {item.usedInDays.join(', ')}
+                          </span>
+                        </div>
+                        <span className="font-mono text-xs sm:text-sm font-bold text-forest-800 bg-forest-50 border border-forest-100 px-2.5 py-1 rounded-lg shrink-0">
+                          {item.formattedTotal}
                         </span>
-                      </div>
-                      <span className="font-mono text-xs sm:text-sm font-bold text-forest-800 bg-forest-50 border border-forest-100 px-2.5 py-1 rounded-lg shrink-0">
-                        {item.formattedTotal}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            );
-          })}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              );
+            })
+          )}
         </div>
 
         <div className="px-5 py-3.5 border-t border-border bg-subtle/40 flex items-center justify-between gap-3">

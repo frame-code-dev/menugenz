@@ -9,6 +9,7 @@ import {
   NutritionEstimate,
   RecipeIngredient,
   WeeklyMenuPlan,
+  WeeklyNutritionAnalysis,
 } from '@/types/recommendation';
 
 export const MBG_TARGET_GROUPS: MbgTargetGroupOption[] = [
@@ -1337,4 +1338,186 @@ export function sanitizeIngredients(raw: unknown): RecipeIngredient[] {
       };
     })
     .filter((item) => item.name.length > 0);
+}
+
+/**
+ * Filter weekly days by keyword and/or meal category.
+ * Returns only days that have at least one matching dish.
+ */
+export function filterWeeklyDays(
+  days: DailyMenuPlan[],
+  searchQuery: string,
+  categoryFilter: MealCategoryKey | 'all'
+): DailyMenuPlan[] {
+  const q = searchQuery.trim().toLowerCase();
+  const categories =
+    categoryFilter === 'all'
+      ? MEAL_CATEGORIES
+      : MEAL_CATEGORIES.filter((c) => c.key === categoryFilter);
+
+  return days.filter((day) => {
+    if (!q) {
+      return categories.some((c) => Boolean(day.meals[c.key]));
+    }
+    if (day.dayLabel.toLowerCase().includes(q)) {
+      return categories.some((c) => Boolean(day.meals[c.key]));
+    }
+    return categories.some((c) => {
+      const dish = day.meals[c.key];
+      if (!dish) return false;
+      return (
+        dish.name.toLowerCase().includes(q) ||
+        dish.shortSummary.toLowerCase().includes(q) ||
+        dish.ingredients.some((ing) => ing.name.toLowerCase().includes(q))
+      );
+    });
+  });
+}
+
+function parseKcalRange(rangeLabel: string): [number, number] {
+  const nums = rangeLabel.match(/\d+/g)?.map(Number) || [];
+  if (nums.length >= 2) return [nums[0], nums[1]];
+  if (nums.length === 1) return [nums[0] - 50, nums[0] + 50];
+  return [500, 700];
+}
+
+/**
+ * Compute real nutritional & operational analysis for a weekly (or filtered) plan.
+ */
+export function computeWeeklyNutritionAnalysis(
+  days: DailyMenuPlan[],
+  portions: number,
+  targetGroup: MbgTargetGroupOption
+): WeeklyNutritionAnalysis {
+  const [targetMinKcal, targetMaxKcal] = parseKcalRange(targetGroup.energyTargetKcal);
+  const safePortions = Math.max(1, portions);
+
+  if (days.length === 0) {
+    return {
+      daysCount: 0,
+      totalPortionsPerWeek: 0,
+      avgCalories: 0,
+      avgProteinGrams: 0,
+      avgCarbsGrams: 0,
+      avgFatGrams: 0,
+      minCalories: 0,
+      maxCalories: 0,
+      uniqueProteinSources: [],
+      targetMinKcal,
+      targetMaxKcal,
+      alignmentStatus: 'di_bawah',
+      alignmentLabel: 'Belum ada data menu sesuai filter',
+      conclusion: 'Tidak ada data hari yang memenuhi kriteria filter saat ini.',
+    };
+  }
+
+  const dailyTotals = days.map((d) =>
+    sumDailyNutrition(d, targetGroup.portionMultiplier)
+  );
+  const sumCal = dailyTotals.reduce((a, b) => a + b.calories, 0);
+  const sumProt = dailyTotals.reduce((a, b) => a + b.proteinGrams, 0);
+  const sumCarb = dailyTotals.reduce((a, b) => a + b.carbsGrams, 0);
+  const sumFat = dailyTotals.reduce((a, b) => a + b.fatGrams, 0);
+
+  const avgCalories = Math.round(sumCal / days.length);
+  const avgProteinGrams = Math.round((sumProt / days.length) * 10) / 10;
+  const avgCarbsGrams = Math.round((sumCarb / days.length) * 10) / 10;
+  const avgFatGrams = Math.round((sumFat / days.length) * 10) / 10;
+  const minCalories = Math.min(...dailyTotals.map((t) => t.calories));
+  const maxCalories = Math.max(...dailyTotals.map((t) => t.calories));
+
+  const uniqueProteinSources = Array.from(
+    new Set(
+      days
+        .map((d) => d.meals.protein?.name?.trim())
+        .filter((n): n is string => Boolean(n))
+    )
+  );
+
+  let alignmentStatus: 'sesuai' | 'di_bawah' | 'di_atas' = 'sesuai';
+  let alignmentLabel = 'Sesuai Rentang AKG Sasaran';
+  if (avgCalories < targetMinKcal) {
+    alignmentStatus = 'di_bawah';
+    alignmentLabel = 'Sedikit di Bawah Target Energi';
+  } else if (avgCalories > targetMaxKcal) {
+    alignmentStatus = 'di_atas';
+    alignmentLabel = 'Sedikit di Atas Target Energi';
+  }
+
+  const varietyNote =
+    uniqueProteinSources.length >= days.length
+      ? `Variasi protein hewani sangat baik (${uniqueProteinSources.length} jenis berbeda pada ${days.length} hari).`
+      : `Terdapat ${uniqueProteinSources.length} variasi protein utama pada ${days.length} hari.`;
+
+  const alignmentSentence =
+    alignmentStatus === 'sesuai'
+      ? `Rata-rata energi ${avgCalories} kkal/porsi berada tepat dalam kisaran acuan ${targetGroup.label} (${targetGroup.energyTargetKcal}).`
+      : alignmentStatus === 'di_bawah'
+      ? `Rata-rata energi ${avgCalories} kkal/porsi sedikit di bawah kisaran ${targetGroup.energyTargetKcal}; dapat ditambah porsi karbohidrat atau lauk pendamping.`
+      : `Rata-rata energi ${avgCalories} kkal/porsi sedikit melampaui kisaran ${targetGroup.energyTargetKcal}; perhatikan takaran nasi/minyak saat pemorsian.`;
+
+  return {
+    daysCount: days.length,
+    totalPortionsPerWeek: days.length * safePortions,
+    avgCalories,
+    avgProteinGrams,
+    avgCarbsGrams,
+    avgFatGrams,
+    minCalories,
+    maxCalories,
+    uniqueProteinSources,
+    targetMinKcal,
+    targetMaxKcal,
+    alignmentStatus,
+    alignmentLabel,
+    conclusion: `${alignmentSentence} Rata-rata protein mencapai ${avgProteinGrams} g/porsi. ${varietyNote}`,
+  };
+}
+
+/**
+ * Immutably swap a dish between two days within the same MBG meal category row
+ * (e.g. moving "Nasi Gurih" from Jumat to Selasa swaps it with Selasa's karbohidrat).
+ */
+export function swapDishBetweenDays(
+  plan: WeeklyMenuPlan,
+  category: MealCategoryKey,
+  fromDayKey: DayKey,
+  toDayKey: DayKey
+): WeeklyMenuPlan {
+  if (fromDayKey === toDayKey) return plan;
+
+  const fromIdx = plan.days.findIndex((d) => d.dayKey === fromDayKey);
+  const toIdx = plan.days.findIndex((d) => d.dayKey === toDayKey);
+  if (fromIdx === -1 || toIdx === -1) return plan;
+
+  const fromDish = plan.days[fromIdx].meals[category];
+  const toDish = plan.days[toIdx].meals[category];
+  if (!fromDish || !toDish) return plan;
+
+  const nextDays = plan.days.map((day, idx) => {
+    if (idx === fromIdx) {
+      return {
+        ...day,
+        meals: {
+          ...day.meals,
+          [category]: toDish,
+        },
+      };
+    }
+    if (idx === toIdx) {
+      return {
+        ...day,
+        meals: {
+          ...day.meals,
+          [category]: fromDish,
+        },
+      };
+    }
+    return day;
+  });
+
+  return {
+    ...plan,
+    days: nextDays,
+  };
 }

@@ -116,7 +116,51 @@ function normalizeDish(
 
 export async function POST(request: NextRequest) {
   try {
-    const body = (await request.json()) as Partial<RecommendMenuRequest>;
+    let body: Partial<RecommendMenuRequest>;
+    try {
+      const parsed = await request.json();
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return NextResponse.json(
+          { success: false, message: 'Format payload permintaan rekomendasi tidak valid.' },
+          { status: 400 }
+        );
+      }
+      body = parsed as Partial<RecommendMenuRequest>;
+    } catch {
+      return NextResponse.json(
+        { success: false, message: 'Body permintaan harus berupa JSON yang valid.' },
+        { status: 400 }
+      );
+    }
+
+    const allowedTargetIds: MbgTargetGroupId[] = [
+      'paud_tk',
+      'sd_1_3',
+      'sd_4_6',
+      'smp',
+      'sma_smk',
+      'ibu_hamil_menyusui',
+    ];
+    if (body.targetGroup !== undefined && !allowedTargetIds.includes(body.targetGroup)) {
+      return NextResponse.json(
+        { success: false, message: 'Kelompok sasaran MBG tidak dikenali.' },
+        { status: 400 }
+      );
+    }
+
+    if (
+      body.portions !== undefined &&
+      (typeof body.portions !== 'number' ||
+        !Number.isFinite(body.portions) ||
+        body.portions < 1 ||
+        body.portions > 10000)
+    ) {
+      return NextResponse.json(
+        { success: false, message: 'Jumlah porsi harus berupa angka antara 1 hingga 10.000.' },
+        { status: 400 }
+      );
+    }
+
     const targetGroupId: MbgTargetGroupId = body.targetGroup || 'sd_4_6';
     const targetGroup = getTargetGroupOption(targetGroupId);
     const regionObj =

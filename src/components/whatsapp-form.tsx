@@ -8,8 +8,14 @@ import {
   Download,
   Share2,
   Info,
+  AlertCircle,
 } from 'lucide-react';
-import { openWhatsApp, normalizePhone } from '@/lib/whatsapp';
+import {
+  getLocalTodayIso,
+  isValidPhone,
+  normalizePhone,
+  openWhatsApp,
+} from '@/lib/whatsapp';
 import { isVideoFile } from '@/lib/video';
 
 interface WhatsAppFormProps {
@@ -29,12 +35,12 @@ export const WhatsAppForm: React.FC<WhatsAppFormProps> = ({
 }) => {
   const [phone, setPhone] = useState('');
   const [normalizedPreview, setNormalizedPreview] = useState('');
+  const [phoneError, setPhoneError] = useState<string | null>(null);
+  const [shareFeedback, setShareFeedback] = useState<string | null>(null);
   const [canWebShare, setCanWebShare] = useState(false);
 
   const isVideo = Boolean(imageFile && isVideoFile(imageFile));
   const mediaLabel = isVideo ? 'Video' : 'Foto';
-
-  const getTodayString = () => new Date().toISOString().split('T')[0];
 
   useEffect(() => {
     if (typeof window !== 'undefined' && 'share' in navigator && 'canShare' in navigator) {
@@ -48,7 +54,7 @@ export const WhatsAppForm: React.FC<WhatsAppFormProps> = ({
       if (savedRaw) {
         try {
           const parsed = JSON.parse(savedRaw);
-          if (parsed && parsed.savedDate === getTodayString()) {
+          if (parsed && parsed.savedDate === getLocalTodayIso()) {
             setPhone(parsed.phone || '');
           } else {
             localStorage.removeItem(STORAGE_KEY);
@@ -74,11 +80,15 @@ export const WhatsAppForm: React.FC<WhatsAppFormProps> = ({
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setPhone(val);
+    if (phoneError && (!val.trim() || isValidPhone(val))) {
+      setPhoneError(null);
+    }
+
     try {
       if (val.trim()) {
         const payload = JSON.stringify({
           phone: val,
-          savedDate: getTodayString(),
+          savedDate: getLocalTodayIso(),
         });
         localStorage.setItem(STORAGE_KEY, payload);
       } else {
@@ -91,7 +101,18 @@ export const WhatsAppForm: React.FC<WhatsAppFormProps> = ({
 
   const handleOpenWhatsApp = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!phone.trim() || !caption.trim()) return;
+    setShareFeedback(null);
+
+    if (!caption.trim()) return;
+
+    if (!phone.trim() || !isValidPhone(phone)) {
+      setPhoneError(
+        'Nomor WhatsApp belum valid. Gunakan format Indonesia 08xxx atau 628xxx (10–14 digit).'
+      );
+      return;
+    }
+
+    setPhoneError(null);
     openWhatsApp(phone, caption);
   };
 
@@ -110,7 +131,7 @@ export const WhatsAppForm: React.FC<WhatsAppFormProps> = ({
       link.href = tempUrl;
     }
 
-    link.download = `MenuGenZ_${getTodayString()}.${ext}`;
+    link.download = `MenuGenZ_${getLocalTodayIso()}.${ext}`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -121,6 +142,7 @@ export const WhatsAppForm: React.FC<WhatsAppFormProps> = ({
 
   const handleNativeShare = async () => {
     if (!navigator.share || !caption) return;
+    setShareFeedback(null);
 
     try {
       const shareData: ShareData = {
@@ -133,14 +155,20 @@ export const WhatsAppForm: React.FC<WhatsAppFormProps> = ({
       }
 
       await navigator.share(shareData);
-    } catch {
-      // User cancelled share or unsupported
+    } catch (err) {
+      if (err instanceof Error && err.name !== 'AbortError') {
+        setShareFeedback(
+          'Browser belum mendukung lampiran file langsung via Share. Gunakan tombol Unduh dan Buka WhatsApp.'
+        );
+      }
     }
   };
 
+  const isPhoneCurrentlyValid = phone.trim().length > 0 && isValidPhone(phone);
+
   return (
     <div className="w-full p-5 rounded-2xl bg-forest-50/55 border border-forest-100 flex flex-col gap-4">
-      <form onSubmit={handleOpenWhatsApp} className="flex flex-col gap-4">
+      <form onSubmit={handleOpenWhatsApp} noValidate className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-forest-900 font-bold text-sm">
             <MessageSquare className="w-4 h-4 text-forest-700" aria-hidden="true" />
@@ -151,7 +179,7 @@ export const WhatsAppForm: React.FC<WhatsAppFormProps> = ({
             <button
               type="button"
               onClick={handleDownloadMedia}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-surface border border-forest-200 text-forest-800 hover:bg-forest-50 text-xs font-semibold transition-colors"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-surface border border-forest-200 text-forest-800 hover:bg-forest-50 text-xs font-semibold transition-colors cursor-pointer"
             >
               <Download className="w-3.5 h-3.5" aria-hidden="true" />
               <span>Unduh {mediaLabel}</span>
@@ -173,15 +201,38 @@ export const WhatsAppForm: React.FC<WhatsAppFormProps> = ({
             inputMode="tel"
             value={phone}
             onChange={handlePhoneChange}
+            aria-invalid={phoneError ? 'true' : undefined}
+            aria-describedby={phoneError ? 'wa-phone-error' : undefined}
             placeholder="Contoh: 08123456789 atau 628123456789"
             disabled={disabled}
-            className="w-full px-4 py-3 rounded-xl border border-border focus:border-forest-700 focus:ring-2 focus:ring-forest-700/15 text-sm text-ink bg-surface outline-none transition-colors placeholder:text-ink-faint disabled:bg-subtle"
+            className={`w-full px-4 py-3 rounded-xl border text-sm text-ink bg-surface outline-none transition-colors placeholder:text-ink-faint disabled:bg-subtle ${
+              phoneError
+                ? 'border-rose-400 focus:border-rose-600 focus:ring-2 focus:ring-rose-500/15'
+                : 'border-border focus:border-forest-700 focus:ring-2 focus:ring-forest-700/15'
+            }`}
           />
-          {normalizedPreview && (
-            <span className="text-xs text-forest-800">
-              Format WhatsApp:{' '}
-              <strong className="font-mono">+{normalizedPreview}</strong>
-            </span>
+
+          {phoneError ? (
+            <p
+              id="wa-phone-error"
+              role="alert"
+              className="text-xs text-rose-700 font-medium flex items-center gap-1.5"
+            >
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+              <span>{phoneError}</span>
+            </p>
+          ) : (
+            normalizedPreview && (
+              <span
+                className={`text-xs ${
+                  isPhoneCurrentlyValid ? 'text-forest-800' : 'text-amber-800'
+                }`}
+              >
+                Format WhatsApp:{' '}
+                <strong className="font-mono">+{normalizedPreview}</strong>
+                {!isPhoneCurrentlyValid && ' (periksa kelengkapan digit)'}
+              </span>
+            )
           )}
         </div>
 
@@ -189,7 +240,7 @@ export const WhatsAppForm: React.FC<WhatsAppFormProps> = ({
           <button
             type="submit"
             disabled={!phone.trim() || !caption.trim() || disabled}
-            className="flex-1 inline-flex items-center justify-center gap-2 py-3 px-5 rounded-xl bg-forest-700 hover:bg-forest-800 text-white font-semibold text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex-1 inline-flex items-center justify-center gap-2 py-3 px-5 rounded-xl bg-forest-700 hover:bg-forest-800 text-white font-semibold text-sm transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <MessageSquare className="w-4 h-4" aria-hidden="true" />
             <span>Buka WhatsApp</span>
@@ -201,13 +252,19 @@ export const WhatsAppForm: React.FC<WhatsAppFormProps> = ({
               type="button"
               onClick={handleNativeShare}
               disabled={!caption.trim() || disabled}
-              className="sm:w-auto inline-flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-surface border border-border hover:bg-subtle text-ink font-semibold text-sm transition-colors shrink-0 disabled:opacity-50"
+              className="sm:w-auto inline-flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-surface border border-border hover:bg-subtle text-ink font-semibold text-sm transition-colors shrink-0 cursor-pointer disabled:opacity-50"
             >
               <Share2 className="w-4 h-4 text-forest-700" aria-hidden="true" />
               <span>Share HP (Dengan {mediaLabel})</span>
             </button>
           )}
         </div>
+
+        {shareFeedback && (
+          <p role="alert" className="text-xs text-amber-900 bg-amber-50 border border-amber-200 px-3 py-2 rounded-xl">
+            {shareFeedback}
+          </p>
+        )}
       </form>
 
       <p className="text-xs text-forest-900/80 leading-relaxed flex items-start gap-2 pt-1 border-t border-forest-100">

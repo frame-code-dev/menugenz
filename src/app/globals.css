@@ -135,6 +135,53 @@ dialog.app-dialog::backdrop {
   z-index: 3;
 }
 
+/* Interactive drag-and-drop dish matrix helpers */
+.mbg-drag-handle {
+  cursor: grab;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.mbg-drag-handle:is(:hover, :focus-visible) {
+  background-color: #edf5f0;
+  color: #1b4332;
+}
+
+.mbg-drag-cell:has(.mbg-drag-handle:focus-visible) {
+  outline: 2px solid var(--accent-forest);
+  outline-offset: -2px;
+  border-radius: 0.75rem;
+}
+
+html.mbg-is-dragging,
+html.mbg-is-dragging * {
+  cursor: grabbing !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mbg-drag-card,
+  .mbg-swap-flash {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+@keyframes mbg-swap-highlight {
+  0% {
+    background-color: rgba(27, 67, 50, 0.16);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.mbg-swap-flash {
+  animation: mbg-swap-highlight 650ms ease-out;
+}
+
 /* Safe area helpers for fixed mobile PWA bottom nav */
 .pwa-bottom-nav {
   padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));
@@ -159,6 +206,40 @@ dialog.app-dialog::backdrop {
 .clean-scroll::-webkit-scrollbar-thumb {
   background: #d6d0c4;
   border-radius: 999px;
+}
+
+/* Accessible horizontal scroll-snap carousel for Interactive Recommendation Cards */
+.mbg-carousel-track {
+  display: flex;
+  gap: 1rem;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  overscroll-behavior-x: contain;
+  touch-action: manipulation;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  padding-block: 0.25rem 0.5rem;
+}
+
+.mbg-carousel-track::-webkit-scrollbar {
+  display: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .mbg-carousel-track {
+    scroll-behavior: smooth;
+  }
+}
+
+.mbg-carousel-track:focus-visible {
+  outline: 2px solid var(--accent-forest);
+  outline-offset: 2px;
+  border-radius: 1rem;
+}
+
+.mbg-carousel-slide {
+  scroll-snap-align: start;
+  scroll-snap-stop: normal;
 }
 
 /* Print optimization for MBG Weekly Schedule */

@@ -93,3 +93,20 @@ export interface AggregatedShoppingItem {
   group: 'utama' | 'bumbu' | 'pelengkap';
   usedInDays: string[];
 }
+
+export interface WeeklyNutritionAnalysis {
+  daysCount: number;
+  totalPortionsPerWeek: number;
+  avgCalories: number;
+  avgProteinGrams: number;
+  avgCarbsGrams: number;
+  avgFatGrams: number;
+  minCalories: number;
+  maxCalories: number;
+  uniqueProteinSources: string[];
+  targetMinKcal: number;
+  targetMaxKcal: number;
+  alignmentStatus: 'sesuai' | 'di_bawah' | 'di_atas';
+  alignmentLabel: string;
+  conclusion: string;
+}
