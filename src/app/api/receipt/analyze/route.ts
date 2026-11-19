@@ -1,5 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { callGeminiJson } from '@/lib/gemini';
 import { ReceiptItem, ReceiptResult } from '@/types/receipt';
+
+interface GeminiReceiptRaw {
+  merchant_name?: string | null;
+  date?: string | null;
+  items?: Array<{
+    name?: unknown;
+    qty?: unknown;
+    unit?: unknown;
+    price_per_unit?: unknown;
+    total_price?: unknown;
+  }>;
+  subtotal?: unknown;
+  discount?: unknown;
+  tax?: unknown;
+  total_amount?: unknown;
+  payment_method?: string | null;
+  receipt_note?: string | null;
+}
+
+function parseNumeric(val: unknown): number | null {
+  if (typeof val === 'number' && !Number.isNaN(val)) return val;
+  if (val !== undefined && val !== null && val !== '') {
+    const parsed = parseFloat(String(val).replace(/[^\d.-]/g, ''));
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  return null;
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -29,20 +57,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const apiKey = (process.env.AI_API_KEY || '').trim();
-    const model = process.env.AI_MODEL || 'gemini-flash-latest';
-    const baseUrl = process.env.AI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta';
-
-    if (!apiKey) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: 'AI_API_KEY belum diatur di Environment Variables.',
-        },
-        { status: 400 }
-      );
-    }
-
     const arrayBuffer = await file.arrayBuffer();
     const base64Image = Buffer.from(arrayBuffer).toString('base64');
 
@@ -64,7 +78,7 @@ Ekstrak seluruh informasi rincian belanja secara akurat dengan aturan berikut:
 6. "tax": Pajak/PPN jika ada (angka murni), null jika tidak ada.
 7. "total_amount": TOTAL AKHIR / TOTAL BAYAR (Grand Total) dalam angka murni. Jika tidak ada angka total bayar yang tertulis jelas, hitung penjumlahan dari seluruh item.
 8. "payment_method": Metode pembayaran jika tertulis (contoh: "Tunai / Cash", "QRIS", "BCA", "GoPay", "ShopeePay", dll), null jika tidak ada.
-9. "receipt_note": TEPAT 1-2 kalimat ringkasan catatan belanja operasional / bahan makanan program MBG yang edukatif dan profesional.
+9. "receipt_note": TEPAT 1-2 kalimat ringkasan catatan belanja operasional / bahan makanan program MBG yang formal namun santai dan rapi.
 10. Semua angka harga ("price_per_unit", "total_price", "subtotal", "discount", "tax", "total_amount") WAJIB berupa NUMBER numerik (misal 15000 bukan "15.000" atau "Rp 15.000").
 11. Pertahankan urutan item sesuai yang tercetak pada struk.
 12. Output WAJIB JSON murni valid tanpa teks pengantar tambahan.
@@ -90,176 +104,49 @@ Format JSON yang harus dihasilkan:
   "receipt_note": "Ringkasan 1-2 kalimat catatan pembelian."
 }`;
 
-    const primaryModel = (process.env.AI_MODEL || 'gemini-flash-latest').trim();
-    const candidateModels = Array.from(
-      new Set([primaryModel, 'gemini-3.5-flash', 'gemini-flash-lite-latest'])
-    );
-
-    let rawText: string | null = null;
-    let lastErrorStatus: number = 500;
-    let lastErrorMessage: string = 'Layanan AI sedang sibuk. Silakan coba beberapa saat lagi.';
-    let isRateLimited = false;
-
-    for (const modelToTry of candidateModels) {
-      let modelSuccess = false;
-
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-          const endpoint = `${baseUrl}/models/${modelToTry}:generateContent?key=${apiKey}`;
-
-          const response = await fetch(endpoint, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              contents: [
-                {
-                  parts: [
-                    { text: systemPrompt },
-                    {
-                      inline_data: {
-                        mime_type: file.type || 'image/jpeg',
-                        data: base64Image,
-                      },
-                    },
-                  ],
-                },
-              ],
-              generationConfig: {
-                response_mime_type: 'application/json',
-                temperature: 0.1,
-              },
-            }),
-          });
-
-          if (!response.ok) {
-            const errorText = await response.text();
-            console.error(`Gemini Receipt Vision API error (model: ${modelToTry}, attempt: ${attempt}):`, errorText);
-            lastErrorStatus = response.status;
-
-            if (response.status === 429) {
-              isRateLimited = true;
-              lastErrorMessage = 'Batas penggunaan AI harian/menit telah tercapai. Silakan coba kembali beberapa saat lagi.';
-            } else if (response.status === 503) {
-              lastErrorMessage = 'Layanan AI sedang mengalami lonjakan beban. Sedang mencoba kembali...';
-            }
-
-            // If 503 or 429, wait briefly before retrying
-            if (response.status === 503 || response.status === 429) {
-              await new Promise((res) => setTimeout(res, 1200 * attempt));
-              continue;
-            }
-
-            // For other HTTP errors (e.g. 404), break to try next model immediately
-            break;
-          }
-
-          const result = await response.json();
-          const parts = result.candidates?.[0]?.content?.parts;
-
-          // Helper to extract clean JSON string
-          if (Array.isArray(parts) && parts.length > 0) {
-            let combined = '';
-            for (const p of parts) {
-              if (p && typeof p.text === 'string') {
-                combined += p.text;
-              }
-            }
-            combined = combined.trim();
-
-            const fenceMatch = combined.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-            if (fenceMatch && fenceMatch[1]) {
-              rawText = fenceMatch[1].trim();
-            } else {
-              const start = combined.indexOf('{');
-              const end = combined.lastIndexOf('}');
-              if (start !== -1 && end > start) {
-                rawText = combined.substring(start, end + 1).trim();
-              } else {
-                rawText = combined;
-              }
-            }
-          }
-
-          if (rawText) {
-            modelSuccess = true;
-            break;
-          }
-        } catch (fetchErr: any) {
-          console.warn(`Fetch attempt ${attempt} for model ${modelToTry} failed:`, fetchErr?.message || fetchErr);
-          if (attempt < 2) {
-            await new Promise((res) => setTimeout(res, 1000 * attempt));
-          }
-        }
-      }
-
-      if (modelSuccess && rawText) {
-        break;
-      }
-    }
-
-    if (!rawText) {
-      if (isRateLimited) {
-        return NextResponse.json(
-          {
-            success: false,
-            isRateLimited: true,
-            message: lastErrorMessage,
+    const aiResponse = await callGeminiJson<GeminiReceiptRaw>({
+      parts: [
+        { text: systemPrompt },
+        {
+          inline_data: {
+            mime_type: file.type || 'image/jpeg',
+            data: base64Image,
           },
-          { status: 429 }
-        );
-      }
+        },
+      ],
+      temperature: 0.1,
+      logContext: 'Gemini Receipt Vision API',
+    });
 
+    if (!aiResponse.success || !aiResponse.data) {
       return NextResponse.json(
         {
           success: false,
-          message: lastErrorMessage || 'Gagal membaca struk dengan AI. Silakan coba kembali beberapa saat lagi.',
+          isRateLimited: aiResponse.isRateLimited,
+          message:
+            aiResponse.message ||
+            'Gagal membaca struk dengan AI. Silakan coba kembali beberapa saat lagi.',
         },
-        { status: lastErrorStatus || 500 }
+        { status: aiResponse.status || 500 }
       );
     }
 
-    let parsed: any;
-    try {
-      parsed = JSON.parse(rawText);
-    } catch (parseErr) {
-      console.error('JSON parse error from Gemini output:', parseErr, 'Raw:', rawText);
-      return NextResponse.json(
-        { success: false, message: 'Hasil pembacaan struk dari AI tidak dalam format yang valid. Silakan coba lagi.' },
-        { status: 500 }
-      );
-    }
-
-    // Format and sanitize items
+    const parsed = aiResponse.data;
     const rawItems = Array.isArray(parsed.items) ? parsed.items : [];
     const formattedItems: ReceiptItem[] = rawItems
-      .filter((item: any) => item && (item.name || item.total_price))
-      .map((item: any) => ({
+      .filter((item) => item && (item.name || item.total_price))
+      .map((item) => ({
         name: String(item.name || 'Item Tanpa Nama').trim(),
-        qty: item.qty !== undefined && item.qty !== null ? item.qty : null,
+        qty:
+          item.qty !== undefined && item.qty !== null
+            ? (item.qty as number | string)
+            : null,
         unit: item.unit ? String(item.unit).trim() : null,
-        pricePerUnit:
-          typeof item.price_per_unit === 'number'
-            ? item.price_per_unit
-            : item.price_per_unit
-            ? parseFloat(String(item.price_per_unit).replace(/[^\d.-]/g, '')) || null
-            : null,
-        totalPrice:
-          typeof item.total_price === 'number'
-            ? item.total_price
-            : item.total_price
-            ? parseFloat(String(item.total_price).replace(/[^\d.-]/g, '')) || null
-            : null,
+        pricePerUnit: parseNumeric(item.price_per_unit),
+        totalPrice: parseNumeric(item.total_price),
       }));
 
-    // Calculate total if missing
-    let totalAmount =
-      typeof parsed.total_amount === 'number'
-        ? parsed.total_amount
-        : parsed.total_amount
-        ? parseFloat(String(parsed.total_amount).replace(/[^\d.-]/g, '')) || null
-        : null;
+    let totalAmount = parseNumeric(parsed.total_amount);
 
     if (totalAmount === null && formattedItems.length > 0) {
       const sum = formattedItems.reduce(
@@ -270,30 +157,20 @@ Format JSON yang harus dihasilkan:
     }
 
     const receiptResult: ReceiptResult = {
-      merchantName: parsed.merchant_name && parsed.merchant_name !== 'null' ? parsed.merchant_name : null,
-      date: parsed.date && parsed.date !== 'null' ? parsed.date : null,
+      merchantName:
+        parsed.merchant_name && parsed.merchant_name !== 'null'
+          ? String(parsed.merchant_name)
+          : null,
+      date: parsed.date && parsed.date !== 'null' ? String(parsed.date) : null,
       items: formattedItems,
-      subtotal:
-        typeof parsed.subtotal === 'number'
-          ? parsed.subtotal
-          : parsed.subtotal
-          ? parseFloat(String(parsed.subtotal).replace(/[^\d.-]/g, '')) || null
-          : null,
-      discount:
-        typeof parsed.discount === 'number'
-          ? parsed.discount
-          : parsed.discount
-          ? parseFloat(String(parsed.discount).replace(/[^\d.-]/g, '')) || null
-          : null,
-      tax:
-        typeof parsed.tax === 'number'
-          ? parsed.tax
-          : parsed.tax
-          ? parseFloat(String(parsed.tax).replace(/[^\d.-]/g, '')) || null
-          : null,
+      subtotal: parseNumeric(parsed.subtotal),
+      discount: parseNumeric(parsed.discount),
+      tax: parseNumeric(parsed.tax),
       totalAmount,
       paymentMethod:
-        parsed.payment_method && parsed.payment_method !== 'null' ? parsed.payment_method : null,
+        parsed.payment_method && parsed.payment_method !== 'null'
+          ? String(parsed.payment_method)
+          : null,
       receiptNote: parsed.receipt_note || undefined,
     };
 

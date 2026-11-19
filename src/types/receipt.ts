@@ -25,4 +25,4 @@ export interface AnalyzeReceiptApiResponse {
   isRateLimited?: boolean;
 }
 
-export type AppMode = 'menu' | 'receipt' | 'pasfoto';
+export type AppMode = 'menu' | 'recommend' | 'receipt' | 'pasfoto';

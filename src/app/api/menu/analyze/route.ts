@@ -1,236 +1,224 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { callGeminiJson, GeminiPart } from '@/lib/gemini';
+import { MenuMediaType } from '@/types/menu';
+
+const VALID_IMAGE_MIMES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+const VALID_VIDEO_MIMES = [
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',
+  'video/3gpp',
+  'video/x-m4v',
+];
+
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
+const MAX_DIRECT_VIDEO_BYTES = 15 * 1024 * 1024; // 15 MB direct video cap
+const MAX_FRAMES_COUNT = 8;
+
+interface GeminiMenuRaw {
+  date?: string | null;
+  recipients?: unknown;
+  menus?: unknown;
+  opening_hook?: string;
+  closing_note?: string;
+  mbg_note?: string;
+}
 
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
-    const file = formData.get('image') as File | null;
 
-    if (!file) {
+    // Backwards-compatible inputs:
+    // 1. 'image' (legacy single image upload)
+    // 2. 'media' (direct small video upload)
+    // 3. 'frames' (multiple HD keyframes extracted client-side from a video)
+    const imageFile = formData.get('image') as File | null;
+    const directMediaFile = formData.get('media') as File | null;
+    const frameFiles = formData
+      .getAll('frames')
+      .filter((entry): entry is File => entry instanceof File && entry.size > 0);
+
+    const requestedType = String(formData.get('mediaType') || '').toLowerCase();
+    let mediaType: MenuMediaType = 'image';
+    const mediaParts: GeminiPart[] = [];
+
+    if (frameFiles.length > 0) {
+      mediaType = 'video';
+      const cappedFrames = frameFiles.slice(0, MAX_FRAMES_COUNT);
+      for (const frame of cappedFrames) {
+        if (!VALID_IMAGE_MIMES.includes(frame.type || 'image/jpeg')) {
+          return NextResponse.json(
+            { success: false, message: 'Format frame video tidak valid.' },
+            { status: 400 }
+          );
+        }
+        if (frame.size > 4 * 1024 * 1024) {
+          return NextResponse.json(
+            { success: false, message: 'Ukuran frame video terlalu besar.' },
+            { status: 400 }
+          );
+        }
+        const buf = await frame.arrayBuffer();
+        mediaParts.push({
+          inline_data: {
+            mime_type: frame.type || 'image/jpeg',
+            data: Buffer.from(buf).toString('base64'),
+          },
+        });
+      }
+    } else if (directMediaFile && directMediaFile.size > 0) {
+      const mime = directMediaFile.type || 'video/mp4';
+      const isVid = VALID_VIDEO_MIMES.includes(mime) || mime.startsWith('video/');
+      if (!isVid) {
+        return NextResponse.json(
+          { success: false, message: 'Format video harus MP4, MOV, atau WEBM.' },
+          { status: 400 }
+        );
+      }
+      if (directMediaFile.size > MAX_DIRECT_VIDEO_BYTES) {
+        return NextResponse.json(
+          {
+            success: false,
+            message: 'Ukuran video langsung terlalu besar. Gunakan mode ekstraksi frame otomatis.',
+          },
+          { status: 400 }
+        );
+      }
+      mediaType = 'video';
+      const buf = await directMediaFile.arrayBuffer();
+      mediaParts.push({
+        inline_data: {
+          mime_type: mime,
+          data: Buffer.from(buf).toString('base64'),
+        },
+      });
+    } else if (imageFile && imageFile.size > 0) {
+      if (!VALID_IMAGE_MIMES.includes(imageFile.type)) {
+        return NextResponse.json(
+          { success: false, message: 'Format gambar harus JPG, JPEG, PNG, atau WEBP.' },
+          { status: 400 }
+        );
+      }
+      if (imageFile.size > MAX_IMAGE_BYTES) {
+        return NextResponse.json(
+          { success: false, message: 'Ukuran gambar maksimal 10 MB.' },
+          { status: 400 }
+        );
+      }
+      mediaType = requestedType === 'video' ? 'video' : 'image';
+      const buf = await imageFile.arrayBuffer();
+      mediaParts.push({
+        inline_data: {
+          mime_type: imageFile.type || 'image/jpeg',
+          data: Buffer.from(buf).toString('base64'),
+        },
+      });
+    } else {
       return NextResponse.json(
-        { success: false, message: 'Gambar menu wajib diunggah.' },
+        { success: false, message: 'Foto atau video menu wajib diunggah.' },
         { status: 400 }
       );
     }
 
-    const validMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-    if (!validMimes.includes(file.type)) {
-      return NextResponse.json(
-        { success: false, message: 'Format gambar harus JPG, JPEG, PNG, atau WEBP.' },
-        { status: 400 }
-      );
-    }
+    const mediaContextInstruction =
+      mediaType === 'video'
+        ? 'Kamu menerima video (atau beberapa frame berurutan dari video) yang menampilkan sajian/daftar menu makanan program Makan Bergizi Gratis (MBG). Gabungkan semua nama makanan/minuman, tanggal, dan penerima yang terlihat (atau terdengar bila berupa video langsung) dari seluruh bagian video tanpa duplikasi.'
+        : 'Kamu menerima foto/poster menu makanan program Makan Bergizi Gratis (MBG).';
 
-    const maxSize = 10 * 1024 * 1024; // 10 MB
-    if (file.size > maxSize) {
-      return NextResponse.json(
-        { success: false, message: 'Ukuran gambar maksimal 10 MB.' },
-        { status: 400 }
-      );
-    }
+    const systemPrompt = `Kamu adalah AI Vision sekaligus Copywriter Bahasa Indonesia profesional untuk program Makan Bergizi Gratis (MBG).
 
-    const apiKey = (process.env.AI_API_KEY || '').trim();
-    const model = process.env.AI_MODEL || 'gemini-flash-latest';
-    const baseUrl = process.env.AI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta';
+${mediaContextInstruction}
 
-    if (!apiKey) {
-      return NextResponse.json({
-        success: false,
-        message: 'AI_API_KEY belum diisi di Environment Variables.',
-      }, { status: 400 });
-    }
+Tugas utama:
+1. Identifikasi tanggal menu jika terlihat (format YYYY-MM-DD, atau null jika tidak ada).
+2. Identifikasi target penerima jika tersedia (contoh: "Siswa SD", "PAUD/TK", "SMP", dll).
+3. Identifikasi semua nama makanan/minuman yang terlihat atau tertulis.
+4. Gunakan OCR/teks sebagai sumber utama jika ada, lalu lengkapi dengan pengamatan visual makanan secara akurat.
+5. Jangan mengarang nama makanan yang tidak berdasar pada media.
+6. Jangan memasukkan angka gizi/kalori/gramasi, logo, dekorasi, atau nama kategori generik sebagai nama makanan kecuali memang nama sajiannya.
+7. Pertahankan urutan menu yang logis (Karbohidrat → Protein → Sayuran → Buah → Susu/Minuman).
+8. Tulis "opening_hook" (1–2 kalimat) dan "closing_note" (2 kalimat) dengan gaya COPYWRITER FORMAL TAPI SANTAI:
+   - Sopan, rapi, dan layak untuk grup WhatsApp sekolah/wali murid/instansi SPPG.
+   - Hangat, mengalir, manusiawi, komunikatif — BUKAN bahasa birokratis kaku, BUKAN bahasa iklan berlebihan, dan BUKAN bahasa gaul/alay.
+   - Hindari klise AI seperti "hadir mendukung generasi emas penerus bangsa".
+   - Gunakan 1–2 emoji yang hangat, rapi, dan relevan secara proporsional (misal 🍽️, ✨, 💚) agar enak dibaca di WhatsApp tanpa terkesan ramai/spammy.
+   - Kaitkan "closing_note" secara natural dengan menu spesifik yang benar-benar ada (misalnya menyinggung sumber protein, sayur, atau buah pada sajian tersebut).
+9. Output WAJIB berupa JSON valid saja tanpa teks lain.
 
-    const arrayBuffer = await file.arrayBuffer();
-    const base64Image = Buffer.from(arrayBuffer).toString('base64');
-
-    const systemPrompt = `Kamu adalah AI Vision untuk membaca gambar menu makanan program Makan Bergizi Gratis (MBG).
-
-Tugas utama kamu adalah mengekstrak informasi menu makanan dari gambar yang diberikan dan memberikan narasi singkat seputar MBG.
-
-Analisis gambar dengan teliti dan lakukan:
-1. Identifikasi tanggal menu jika tanggal terlihat pada gambar.
-2. Identifikasi target penerima jika tersedia.
-3. Identifikasi semua nama makanan/minuman yang terlihat atau tertulis pada gambar.
-4. Gunakan OCR/teks pada gambar sebagai sumber utama untuk nama makanan.
-5. Gunakan konteks visual makanan untuk membantu memahami nama makanan.
-6. Jangan mengarang nama makanan yang tidak memiliki dasar dari gambar.
-7. Jika tulisan kurang jelas, pilih nama yang paling masuk akal berdasarkan teks dan visual yang tersedia.
-8. Jangan memasukkan kandungan gizi sebagai nama makanan.
-9. Jangan memasukkan angka kalori, protein, lemak, karbohidrat, serat, vitamin, atau mineral ke daftar menu.
-10. Jangan memasukkan dekorasi atau tulisan yang bukan nama makanan.
-11. Jangan memasukkan logo sebagai menu.
-12. Jangan memasukkan nama kategori makanan sebagai menu kecuali memang tertulis sebagai nama menu.
-13. Buat field "mbg_note" yang berisi TEPAT 2 KALIMAT menarik dan edukatif seputar program Makan Bergizi Gratis (MBG) yang relevan dengan menu pada gambar.
-14. Pertahankan urutan menu yang paling masuk akal berdasarkan posisi pada gambar.
-15. Output harus JSON valid saja.
-
-Format output:
+Format JSON:
 {
   "date": "YYYY-MM-DD atau null",
   "recipients": [],
   "menus": [],
-  "mbg_note": "Tepat 2 kalimat menarik tentang Program Makan Bergizi Gratis (MBG)."
+  "opening_hook": "1-2 kalimat pembuka copywriter formal tapi santai.",
+  "closing_note": "2 kalimat penutup hangat dan edukatif yang relevan dengan menu."
 }`;
 
-    const primaryModel = (process.env.AI_MODEL || 'gemini-flash-latest').trim();
-    const candidateModels = Array.from(
-      new Set([primaryModel, 'gemini-3.5-flash', 'gemini-flash-lite-latest'])
-    );
+    const aiResponse = await callGeminiJson<GeminiMenuRaw>({
+      parts: [{ text: systemPrompt }, ...mediaParts],
+      temperature: 0.35,
+      logContext: 'Gemini Menu Vision API',
+    });
 
-    let rawText: string | null = null;
-    let lastErrorStatus: number = 500;
-    let lastErrorMessage: string = 'Layanan AI sedang sibuk. Silakan coba beberapa saat lagi.';
-    let isRateLimited = false;
-
-    for (const modelToTry of candidateModels) {
-      let modelSuccess = false;
-
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-          const endpoint = `${baseUrl}/models/${modelToTry}:generateContent?key=${apiKey}`;
-
-          const response = await fetch(endpoint, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              contents: [
-                {
-                  parts: [
-                    { text: systemPrompt },
-                    {
-                      inline_data: {
-                        mime_type: file.type || 'image/jpeg',
-                        data: base64Image,
-                      },
-                    },
-                  ],
-                },
-              ],
-              generationConfig: {
-                response_mime_type: 'application/json',
-                temperature: 0.2,
-              },
-            }),
-          });
-
-          if (!response.ok) {
-            const errorText = await response.text();
-            console.error(`Gemini Vision API error (model: ${modelToTry}, attempt: ${attempt}):`, errorText);
-            lastErrorStatus = response.status;
-
-            if (response.status === 429) {
-              isRateLimited = true;
-              lastErrorMessage = 'Batas penggunaan AI harian/menit telah tercapai. Silakan coba kembali beberapa saat lagi.';
-            } else if (response.status === 503) {
-              lastErrorMessage = 'Layanan AI sedang mengalami lonjakan beban. Sedang mencoba kembali...';
-            }
-
-            if (response.status === 503 || response.status === 429) {
-              await new Promise((res) => setTimeout(res, 1200 * attempt));
-              continue;
-            }
-
-            break;
-          }
-
-          const result = await response.json();
-          const parts = result.candidates?.[0]?.content?.parts;
-
-          if (Array.isArray(parts) && parts.length > 0) {
-            let combined = '';
-            for (const p of parts) {
-              if (p && typeof p.text === 'string') {
-                combined += p.text;
-              }
-            }
-            combined = combined.trim();
-
-            const fenceMatch = combined.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-            if (fenceMatch && fenceMatch[1]) {
-              rawText = fenceMatch[1].trim();
-            } else {
-              const start = combined.indexOf('{');
-              const end = combined.lastIndexOf('}');
-              if (start !== -1 && end > start) {
-                rawText = combined.substring(start, end + 1).trim();
-              } else {
-                rawText = combined;
-              }
-            }
-          }
-
-          if (rawText) {
-            modelSuccess = true;
-            break;
-          }
-        } catch (fetchErr: any) {
-          console.warn(`Fetch attempt ${attempt} for model ${modelToTry} failed:`, fetchErr?.message || fetchErr);
-          if (attempt < 2) {
-            await new Promise((res) => setTimeout(res, 1000 * attempt));
-          }
-        }
-      }
-
-      if (modelSuccess && rawText) {
-        break;
-      }
-    }
-
-    if (!rawText) {
-      if (isRateLimited) {
-        return NextResponse.json(
-          {
-            success: false,
-            isRateLimited: true,
-            message: lastErrorMessage,
-          },
-          { status: 429 }
-        );
-      }
-
+    if (!aiResponse.success || !aiResponse.data) {
       return NextResponse.json(
         {
           success: false,
-          message: lastErrorMessage || 'Gagal membaca gambar menu dengan AI. Silakan coba kembali beberapa saat lagi.',
+          isRateLimited: aiResponse.isRateLimited,
+          message:
+            aiResponse.message ||
+            'Gagal membaca media menu dengan AI. Silakan coba kembali beberapa saat lagi.',
         },
-        { status: lastErrorStatus || 500 }
+        { status: aiResponse.status || 500 }
       );
     }
 
-    let parsed: any;
-    try {
-      parsed = JSON.parse(rawText);
-    } catch (parseErr) {
-      console.error('JSON parse error from Gemini output:', parseErr, 'Raw:', rawText);
-      return NextResponse.json(
-        { success: false, message: 'Hasil pembacaan menu dari AI tidak dalam format yang valid. Silakan coba lagi.' },
-        { status: 500 }
-      );
-    }
+    const parsed = aiResponse.data;
+    const menus = Array.isArray(parsed.menus)
+      ? parsed.menus.map((m) => String(m).trim()).filter(Boolean)
+      : [];
+    const recipients = Array.isArray(parsed.recipients)
+      ? parsed.recipients.map((r) => String(r).trim()).filter(Boolean)
+      : [];
 
-    const menuResult = {
-      date: parsed.date && parsed.date !== 'null' ? parsed.date : null,
-      recipients: Array.isArray(parsed.recipients) ? parsed.recipients : [],
-      menus: Array.isArray(parsed.menus) ? parsed.menus : [],
-      mbgNote: parsed.mbg_note || undefined,
-    };
-
-    if (menuResult.menus.length === 0) {
+    if (menus.length === 0) {
       return NextResponse.json(
-        { success: false, message: 'Tidak ditemukan menu makanan pada gambar.' },
+        {
+          success: false,
+          message:
+            mediaType === 'video'
+              ? 'Tidak ditemukan menu makanan yang jelas pada video. Pastikan makanan atau tulisan menu terlihat terang dan tidak terlalu cepat.'
+              : 'Tidak ditemukan menu makanan pada gambar. Pastikan foto menu terlihat jelas.',
+        },
         { status: 422 }
       );
     }
 
+    const closingNote =
+      (typeof parsed.closing_note === 'string' && parsed.closing_note.trim()) ||
+      (typeof parsed.mbg_note === 'string' && parsed.mbg_note.trim()) ||
+      undefined;
+    const openingHook =
+      typeof parsed.opening_hook === 'string' && parsed.opening_hook.trim()
+        ? parsed.opening_hook.trim()
+        : undefined;
+
     return NextResponse.json({
       success: true,
-      data: menuResult,
+      data: {
+        date: parsed.date && parsed.date !== 'null' ? String(parsed.date) : null,
+        recipients,
+        menus,
+        mbgNote: closingNote,
+        openingHook,
+        closingNote,
+        mediaType,
+      },
     });
   } catch (error) {
-    console.error('API analyze error:', error);
+    console.error('API menu analyze error:', error);
     return NextResponse.json(
-      { success: false, message: 'Terjadi kesalahan pada server saat memproses gambar.' },
+      { success: false, message: 'Terjadi kesalahan pada server saat memproses media menu.' },
       { status: 500 }
     );
   }
